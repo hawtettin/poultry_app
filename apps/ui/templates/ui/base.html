@@ -1,4 +1,3 @@
-{% load ui_extras %}
 <!doctype html>
 <html lang="ro">
   <head>
@@ -14,35 +13,20 @@
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbars">
           <span class="navbar-toggler-icon"></span>
         </button>
-
         <div class="collapse navbar-collapse" id="navbars">
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}">Dashboard</a></li>
-
-            {% if user.is_authenticated %}
-              {% if user.is_superuser %}
-                <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
-                <li class="nav-item"><a class="nav-link" href="{% url 'ui:users_list' %}">Angajați</a></li>
-                <li class="nav-item"><a class="nav-link" href="{% url 'ui:access_history' %}">Accesări</a></li>
-                <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
-              {% elif user|in_groups:"ADMIN,MANAGER" %}
-                <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
-                <li class="nav-item"><a class="nav-link" href="{% url 'ui:users_list' %}">Angajați</a></li>
-                <li class="nav-item"><a class="nav-link" href="{% url 'ui:access_history' %}">Accesări</a></li>
-              {% elif user|in_groups:"ADMIN" %}
-                <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
-              {% endif %}
-
-              <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
-            {% else %}
-              <li class="nav-item"><a class="nav-link" href="{% url 'ui:login' %}">Login</a></li>
-            {% endif %}
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}?tab=sales">Vânzări</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
           </ul>
-
           <ul class="navbar-nav ms-auto">
             {% if user.is_authenticated %}
               <li class="nav-item"><span class="navbar-text me-2">Salut, {{ user.username }}</span></li>
               <li class="nav-item"><a class="nav-link" href="{% url 'ui:logout' %}">Logout</a></li>
+            {% else %}
+              <li class="nav-item"><a class="nav-link" href="{% url 'ui:login' %}">Login</a></li>
             {% endif %}
           </ul>
         </div>

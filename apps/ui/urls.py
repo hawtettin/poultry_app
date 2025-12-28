@@ -11,14 +11,15 @@ app_name = "ui"
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("series/new/", views.create_series, name="create_series"),
+
     path("mortality/<int:pk>/edit/", views.mortality_edit, name="mortality_edit"),
     path("mortality/<int:pk>/delete/", views.mortality_delete, name="mortality_delete"),
 
-    path("users/", views.users_list, name="users_list"),
-    path("users/new/", views.user_create, name="user_create"),
-
     path("history/", views.history, name="history"),
-    path("access/", views.access_history, name="access_history"),
+
+    # Vânzări
+    path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
+    path("payments/<int:pk>/paid/", views.payment_mark_paid, name="payment_mark_paid"),
 
     path("login/", auth_views.LoginView.as_view(
         template_name="ui/login.html",
