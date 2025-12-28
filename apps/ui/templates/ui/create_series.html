@@ -1,0 +1,59 @@
+{% extends "ui/base.html" %}
+{% block title %}Serie nouă{% endblock %}
+
+{% block content %}
+<h2 class="mb-3">Creează serie / lot nou</h2>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">{{ form.series_name.label }}</label>
+          {{ form.series_name }}
+          {{ form.series_name.errors }}
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">{{ form.year.label }}</label>
+          {{ form.year }}
+          {{ form.year.errors }}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">{{ form.start_date.label }}</label>
+          {{ form.start_date }}
+          {{ form.start_date.errors }}
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">{{ form.house_existing.label }}</label>
+          {{ form.house_existing }}
+          <div class="form-text">Sau completează “Hală nouă” mai jos.</div>
+          {{ form.house_existing.errors }}
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">{{ form.house_name.label }}</label>
+          {{ form.house_name }}
+          {{ form.house_name.errors }}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">{{ form.initial_count.label }}</label>
+          {{ form.initial_count }}
+          {{ form.initial_count.errors }}
+        </div>
+      </div>
+
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Salvează</button>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}">Înapoi</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

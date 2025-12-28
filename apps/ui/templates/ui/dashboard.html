@@ -1,0 +1,183 @@
+{% extends "ui/base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">Dashboard</h2>
+    <div class="text-muted">Azi: {{ today }} ({{ today_weekday }})</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'ui:create_series' %}">+ Serie nouă</a>
+</div>
+
+<ul class="nav nav-tabs" id="dashTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="flocks-tab" data-bs-toggle="tab" data-bs-target="#flocks" type="button" role="tab">
+      Câți sunt în prezent
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="mort-tab" data-bs-toggle="tab" data-bs-target="#mort" type="button" role="tab">
+      Mortalitate
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content pt-3">
+  <div class="tab-pane fade show active" id="flocks" role="tabpanel">
+    {% if flocks %}
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Serie/Sezon</th>
+              <th>Hală</th>
+              <th>Data populare</th>
+              <th class="text-end">Nr inițial</th>
+              <th class="text-end">Mortalitate</th>
+              <th class="text-end">Nr curent</th>
+              <th class="text-end">Mortalitate %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in flocks %}
+              <tr>
+                <td>{{ f.season.name }}</td>
+                <td>{{ f.house.name }}</td>
+                <td>{{ f.start_date }}</td>
+                <td class="text-end">{{ f.initial_count }}</td>
+                <td class="text-end">{{ f.mortality_total }}</td>
+                <td class="text-end fw-semibold">{{ f.current_count }}</td>
+                <td class="text-end">{{ f.mortality_pct|floatformat:2 }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-info">Nu ai încă loturi. Creează o serie nouă.</div>
+    {% endif %}
+  </div>
+
+  <div class="tab-pane fade" id="mort" role="tabpanel">
+    <div class="row g-3">
+      <div class="col-lg-5">
+        <div class="card">
+          <div class="card-header">Adaugă mortalitate (Enter = salvează)</div>
+          <div class="card-body">
+            <form method="post" novalidate>
+              {% csrf_token %}
+              <input type="hidden" name="_action" value="add_mortality" />
+              {{ mortality_form.non_field_errors }}
+
+              <div class="mb-2">
+                <label class="form-label">{{ mortality_form.date.label }}</label>
+                {{ mortality_form.date }}
+                <div class="form-text">Ziua: <span id="weekdayLabel">—</span></div>
+                {{ mortality_form.date.errors }}
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">{{ mortality_form.flock.label }}</label>
+                {{ mortality_form.flock }}
+                {{ mortality_form.flock.errors }}
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">{{ mortality_form.count.label }}</label>
+                {{ mortality_form.count }}
+                {{ mortality_form.count.errors }}
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">{{ mortality_form.reason.label }}</label>
+                {{ mortality_form.reason }}
+                {{ mortality_form.reason.errors }}
+              </div>
+
+              <button class="btn btn-danger" type="submit">Salvează mortalitatea</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-7">
+        <div class="card">
+          <div class="card-header">Ultimele înregistrări</div>
+          <div class="card-body">
+            {% if recent_mortalities %}
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead>
+                    <tr>
+                      <th>Data</th>
+                      <th>Serie</th>
+                      <th>Hală</th>
+                      <th class="text-end">Nr</th>
+                      <th>Motiv</th>
+                      <th>Autor</th>
+                      <th class="text-end">Acțiuni</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for m in recent_mortalities %}
+                      <tr>
+                        <td>{{ m.date }}</td>
+                        <td>{{ m.flock.season.name }}</td>
+                        <td>{{ m.flock.house.name }}</td>
+                        <td class="text-end">{{ m.count }}</td>
+                        <td>{{ m.reason }}</td>
+                        <td>{% if m.created_by %}{{ m.created_by.username }}{% else %}-{% endif %}</td>
+                        <td class="text-end">
+                          {% if m.can_modify %}
+                            <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:mortality_edit' m.id %}">Editează</a>
+                            <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:mortality_delete' m.id %}">Șterge</a>
+                          {% else %}
+                            <span class="text-muted">—</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="text-muted">Nicio înregistrare încă.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function(){
+    function weekdayFromDate(val){
+      if(!val) return "—";
+      const d = new Date(val + "T00:00:00");
+      return d.toLocaleDateString("ro-RO", { weekday: "long" });
+    }
+
+    const dateInput = document.querySelector('input[name="date"]');
+    const label = document.getElementById("weekdayLabel");
+    if(dateInput && label){
+      label.textContent = weekdayFromDate(dateInput.value);
+      dateInput.addEventListener("change", function(){ label.textContent = weekdayFromDate(this.value); });
+    }
+
+    const countInput = document.querySelector('input[name="count"]');
+    if(countInput){
+      countInput.addEventListener("keydown", function(e){
+        if(e.key === "Enter"){
+          e.preventDefault();
+          this.form.submit();
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}
