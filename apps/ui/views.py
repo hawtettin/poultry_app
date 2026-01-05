@@ -4,6 +4,7 @@ import csv
 from decimal import Decimal
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
@@ -16,20 +17,36 @@ from django.utils.dateparse import parse_date
 from apps.core.models import Flock
 from apps.health.models import MortalityEvent
 from apps.auditlog.utils import log_event, snapshot
-from apps.auditlog.models import AuditEvent
+from apps.auditlog.models import AuditEvent, AccessLog
 from apps.finance.models import Document, DocumentLine, Payment
 
-from .forms import CreateSeriesForm, MortalityQuickAddForm, MortalityEditForm, SaleQuickAddForm
+from .forms import (
+    CreateSeriesForm,
+    MortalityQuickAddForm,
+    MortalityEditForm,
+    PaymentEditForm,
+    SaleQuickAddForm,
+    UserCreateForm,
+    UserUpdateForm,
+)
 
 
 WEEKDAYS_RO = ["luni", "marți", "miercuri", "joi", "vineri", "sâmbătă", "duminică"]
+User = get_user_model()
 
-def is_manager(user) -> bool:
+def is_admin(user) -> bool:
     if not user.is_authenticated:
         return False
     if user.is_superuser:
         return True
-    return user.groups.filter(name__in=["ADMIN", "MANAGER"]).exists()
+    return user.groups.filter(name="ADMIN").exists()
+
+def is_manager(user) -> bool:
+    if not user.is_authenticated:
+        return False
+    if is_admin(user):
+        return True
+    return user.groups.filter(name="MANAGER").exists()
 
 def can_modify_mortality(user, m: MortalityEvent) -> bool:
     if not user.is_authenticated:
@@ -268,6 +285,7 @@ def dashboard(request):
         "today": today,
         "today_weekday": today_weekday,
         "is_manager": is_manager(request.user),
+        "is_admin": is_admin(request.user),
     })
 
 
@@ -497,3 +515,215 @@ def payment_mark_paid(request, pk: int):
 
     # fallback GET
     return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+
+# -------------------------------
+# Utilizatori (admin)
+# -------------------------------
+@login_required
+def users_list(request):
+    if not is_admin(request.user):
+        messages.error(request, "Nu ai permisiuni să gestionezi utilizatorii.")
+        return redirect("ui:dashboard")
+
+    employees = (
+        User.objects.filter(is_superuser=False)
+        .select_related()
+        .order_by("username")
+    )
+    return render(
+        request,
+        "ui/users_list.html",
+        {"employees": employees, "is_admin": True},
+    )
+
+
+@login_required
+def user_create(request):
+    if not is_admin(request.user):
+        messages.error(request, "Nu ai permisiuni să creezi utilizatori.")
+        return redirect("ui:dashboard")
+
+    if request.method == "POST":
+        form = UserCreateForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            log_event(
+                actor=request.user,
+                action="CREATE",
+                instance=user,
+                message=f"CREATE user: {user.username}",
+                before=None,
+                after=snapshot(user),
+                request=request,
+            )
+            messages.success(request, "Utilizator creat cu succes.")
+            return redirect("ui:users_list")
+        messages.error(request, "Nu am putut crea utilizatorul. Verifică formularul.")
+    else:
+        form = UserCreateForm(initial={"role": "EMPLOYEE"})
+
+    return render(request, "ui/user_create.html", {"form": form})
+
+
+@login_required
+def user_edit(request, pk: int):
+    if not is_admin(request.user):
+        messages.error(request, "Nu ai permisiuni să editezi utilizatori.")
+        return redirect("ui:dashboard")
+
+    user = get_object_or_404(User, pk=pk, is_superuser=False)
+    before = snapshot(user)
+    if request.method == "POST":
+        form = UserUpdateForm(request.POST, instance=user)
+        if form.is_valid():
+            user2 = form.save()
+            log_event(
+                actor=request.user,
+                action="UPDATE",
+                instance=user2,
+                message=f"UPDATE user: {user2.username}",
+                before=before,
+                after=snapshot(user2),
+                request=request,
+            )
+            messages.success(request, "Utilizator actualizat.")
+            return redirect("ui:users_list")
+        messages.error(request, "Nu am putut salva modificările. Verifică formularul.")
+    else:
+        form = UserUpdateForm(instance=user)
+
+    return render(request, "ui/user_edit.html", {"form": form, "user_obj": user})
+
+
+@login_required
+def user_delete(request, pk: int):
+    if not is_admin(request.user):
+        messages.error(request, "Nu ai permisiuni să ștergi utilizatori.")
+        return redirect("ui:dashboard")
+
+    user = get_object_or_404(User, pk=pk, is_superuser=False)
+    if request.method == "POST":
+        before = snapshot(user)
+        username = user.username
+        user.delete()
+
+        class Dummy:
+            _meta = type("M", (), {"app_label": "auth", "model_name": "user"})()
+            pk = pk
+        dummy = Dummy()
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=dummy,
+            message=f"DELETE user: {username}",
+            before=before,
+            after=None,
+            request=request,
+        )
+        messages.success(request, "Utilizator șters.")
+        return redirect("ui:users_list")
+
+    return render(request, "ui/user_confirm_delete.html", {"user_obj": user})
+
+
+@login_required
+def access_history(request):
+    qs = AccessLog.objects.select_related("actor")
+    employees = User.objects.filter(is_superuser=False).order_by("username")
+
+    selected_user = (request.GET.get("user") or "").strip()
+    selected_day = (request.GET.get("day") or "").strip()
+
+    if not is_manager(request.user):
+        qs = qs.filter(actor=request.user)
+    elif selected_user.isdigit():
+        qs = qs.filter(actor_id=int(selected_user))
+
+    if selected_day:
+        qs = qs.filter(created_at__date=selected_day)
+
+    events = qs.order_by("-created_at", "-id")[:300]
+    return render(
+        request,
+        "ui/access.html",
+        {
+            "events": events,
+            "employees": employees,
+            "selected_user": selected_user,
+            "selected_day": selected_day,
+            "is_manager": is_manager(request.user),
+        },
+    )
+
+
+# -------------------------------
+# Plăți (manager/admin)
+# -------------------------------
+@login_required
+def payment_edit(request, pk: int):
+    payment = get_object_or_404(Payment.objects.select_related("document", "document__partner"), pk=pk)
+    if not is_manager(request.user):
+        messages.error(request, "Nu ai permisiuni să editezi plăți.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+    before = snapshot(payment)
+    if request.method == "POST":
+        form = PaymentEditForm(request.POST, instance=payment)
+        if form.is_valid():
+            p2 = form.save()
+            log_event(
+                actor=request.user,
+                action="UPDATE",
+                instance=p2,
+                message=f"UPDATE payment #{p2.id} ({p2.amount} {p2.method})",
+                before=before,
+                after=snapshot(p2),
+                request=request,
+            )
+            messages.success(request, "Plata a fost actualizată.")
+            return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+        messages.error(request, "Nu am putut salva plata. Verifică formularul.")
+    else:
+        form = PaymentEditForm(instance=payment)
+
+    return render(
+        request,
+        "ui/payment_edit.html",
+        {"form": form, "payment": payment},
+    )
+
+
+@login_required
+def payment_delete(request, pk: int):
+    payment = get_object_or_404(Payment.objects.select_related("document", "document__partner"), pk=pk)
+    if not is_manager(request.user):
+        messages.error(request, "Nu ai permisiuni să ștergi plăți.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+    if request.method == "POST":
+        before = snapshot(payment)
+        pid = payment.id
+        payment.delete()
+
+        class Dummy:
+            _meta = type("M", (), {"app_label": "finance", "model_name": "payment"})()
+            pk = pid
+        dummy = Dummy()
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=dummy,
+            message=f"DELETE payment #{pid}",
+            before=before,
+            after=None,
+            request=request,
+        )
+        messages.success(request, "Plata a fost ștearsă.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+    return render(
+        request,
+        "ui/payment_confirm_delete.html",
+        {"payment": payment},
+    )

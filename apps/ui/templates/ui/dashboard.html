@@ -423,6 +423,9 @@
                           <th>Cumpărător</th>
                           <th class="text-end">Suma</th>
                           <th class="text-end">Acțiuni</th>
+                          {% if is_manager %}
+                            <th class="text-end">Administrează</th>
+                          {% endif %}
                         </tr>
                       </thead>
                       <tbody>
@@ -444,6 +447,12 @@
                                 <button class="btn btn-sm btn-outline-success" type="submit">Plătit</button>
                               </form>
                             </td>
+                            {% if is_manager %}
+                              <td class="text-end">
+                                <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:payment_edit' p.id %}">Editează</a>
+                                <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:payment_delete' p.id %}">Șterge</a>
+                              </td>
+                            {% endif %}
                           </tr>
                         {% endfor %}
                       </tbody>

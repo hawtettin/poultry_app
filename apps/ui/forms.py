@@ -5,12 +5,20 @@ from decimal import Decimal
 from django import forms
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
+from django.contrib.auth.models import Group
 from django.db.models import Q, Sum
 
 from apps.core.models import House, Season, Flock
 from apps.health.models import MortalityEvent
 from apps.finance.models import Document, DocumentLine, Payment, Partner
+
+User = get_user_model()
+ROLE_CHOICES = [
+    ("EMPLOYEE", "Angajat"),
+    ("MANAGER", "Manager fermă"),
+]
 
 
 class BootstrapAuthenticationForm(AuthenticationForm):
@@ -406,3 +414,138 @@ class SaleQuickAddForm(forms.Form):
             )
 
         return doc
+
+
+class UserCreateForm(UserCreationForm):
+    role = forms.ChoiceField(
+        label="Rol",
+        choices=ROLE_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ["username", "first_name", "last_name", "email", "role", "password1", "password2"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            css = "form-control"
+            if name == "role":
+                css = "form-select"
+            field.widget.attrs.setdefault("class", css)
+            field.widget.attrs.setdefault("autocomplete", "off")
+
+    def _apply_role(self, user, role: str):
+        groups = list(Group.objects.filter(name__in=[c[0] for c in ROLE_CHOICES]))
+        if groups:
+            user.groups.remove(*groups)
+        grp, _ = Group.objects.get_or_create(name=role)
+        user.groups.add(grp)
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.set_password(self.cleaned_data["password1"])
+        user.is_staff = False
+        user.is_superuser = False
+        if commit:
+            user.save()
+            self._apply_role(user, self.cleaned_data.get("role", "EMPLOYEE"))
+        return user
+
+
+class UserUpdateForm(forms.ModelForm):
+    role = forms.ChoiceField(
+        label="Rol",
+        choices=ROLE_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    is_active = forms.BooleanField(label="Activ", required=False)
+    new_password1 = forms.CharField(
+        label="Parolă nouă",
+        required=False,
+        widget=forms.PasswordInput(attrs={"class": "form-control"}),
+    )
+    new_password2 = forms.CharField(
+        label="Parolă nouă (confirmare)",
+        required=False,
+        widget=forms.PasswordInput(attrs={"class": "form-control"}),
+    )
+
+    class Meta:
+        model = User
+        fields = ["first_name", "last_name", "email", "is_active", "role", "new_password1", "new_password2"]
+        widgets = {
+            "first_name": forms.TextInput(attrs={"class": "form-control"}),
+            "last_name": forms.TextInput(attrs={"class": "form-control"}),
+            "email": forms.EmailInput(attrs={"class": "form-control"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        u: User = self.instance
+        # default role = EMPLOYEE
+        role = "EMPLOYEE"
+        if u and u.pk and u.groups.filter(name="MANAGER").exists():
+            role = "MANAGER"
+        self.fields["role"].initial = role
+
+    def _apply_role(self, user, role: str):
+        groups = list(Group.objects.filter(name__in=[c[0] for c in ROLE_CHOICES]))
+        if groups:
+            user.groups.remove(*groups)
+        grp, _ = Group.objects.get_or_create(name=role)
+        user.groups.add(grp)
+
+    def clean(self):
+        cleaned = super().clean()
+        p1 = cleaned.get("new_password1")
+        p2 = cleaned.get("new_password2")
+        if p1 or p2:
+            if p1 != p2:
+                raise ValidationError("Parolele nu coincid.")
+            if p1 and len(p1) < 8:
+                raise ValidationError("Parola trebuie să aibă minim 8 caractere.")
+        return cleaned
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        if self.cleaned_data.get("new_password1"):
+            user.set_password(self.cleaned_data["new_password1"])
+        if commit:
+            user.save()
+            self._apply_role(user, self.cleaned_data.get("role", "EMPLOYEE"))
+        return user
+
+
+class PaymentEditForm(forms.ModelForm):
+    class Meta:
+        model = Payment
+        fields = ["due_date", "paid_date", "amount", "method", "status"]
+        widgets = {
+            "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "paid_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
+            "method": forms.Select(attrs={"class": "form-select"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        status = cleaned.get("status") or "due"
+        paid_date = cleaned.get("paid_date")
+        if status == "paid" and not paid_date:
+            cleaned["paid_date"] = timezone.localdate()
+        if status == "due":
+            cleaned["paid_date"] = None
+        return cleaned
+
+    def save(self, commit=True):
+        obj: Payment = super().save(commit=False)
+        obj.amount = (obj.amount or Decimal("0"))
+        obj.amount = obj.amount.quantize(Decimal("0.01"))
+        if obj.status == "due":
+            obj.paid_date = None
+        if commit:
+            obj.save()
+        return obj

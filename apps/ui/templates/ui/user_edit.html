@@ -1,0 +1,66 @@
+{% extends "ui/base.html" %}
+{% block title %}Editează utilizator{% endblock %}
+
+{% block content %}
+<h2 class="mb-3">Editează utilizator: {{ user_obj.username }}</h2>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Prenume</label>
+          {{ form.first_name }}
+          {{ form.first_name.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Nume</label>
+          {{ form.last_name }}
+          {{ form.last_name.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Email</label>
+          {{ form.email }}
+          {{ form.email.errors }}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Rol</label>
+          {{ form.role }}
+          {{ form.role.errors }}
+        </div>
+        <div class="col-md-2 d-flex align-items-center">
+          <div class="form-check mt-3">
+            {{ form.is_active }}
+            <label class="form-check-label ms-1">{{ form.is_active.label }}</label>
+          </div>
+          {{ form.is_active.errors }}
+        </div>
+      </div>
+
+      <hr>
+      <h5>Resetare parolă</h5>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Parolă nouă</label>
+          {{ form.new_password1 }}
+          {{ form.new_password1.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Parolă nouă (confirmare)</label>
+          {{ form.new_password2 }}
+          {{ form.new_password2.errors }}
+        </div>
+      </div>
+
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Salvează</button>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:users_list' %}">Înapoi</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
