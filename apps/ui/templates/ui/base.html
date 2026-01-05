@@ -24,7 +24,12 @@
           <ul class="navbar-nav ms-auto">
             {% if user.is_authenticated %}
               <li class="nav-item"><span class="navbar-text me-2">Salut, {{ user.username }}</span></li>
-              <li class="nav-item"><a class="nav-link" href="{% url 'ui:logout' %}">Logout</a></li>
+              <li class="nav-item">
+                <form method="post" action="{% url 'ui:logout' %}" class="d-inline">
+                  {% csrf_token %}
+                  <button type="submit" class="nav-link btn btn-link p-0 text-decoration-none">Logout</button>
+                </form>
+              </li>
             {% else %}
               <li class="nav-item"><a class="nav-link" href="{% url 'ui:login' %}">Login</a></li>
             {% endif %}
