@@ -4,7 +4,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2 class="mb-0">Angajați</h2>
-  <a class="btn btn-primary" href="{% url 'ui:user_create' %}">+ Creează angajat</a>
+  <a class="btn btn-primary" href="{% url 'ui:user_create' %}">+ Creează cont</a>
 </div>
 
 {% if employees %}
@@ -14,6 +14,7 @@
       <tr>
         <th>Username</th>
         <th>Nume</th>
+        <th>Rol</th>
         <th>Activ</th>
         <th>Ultimul login</th>
         <th class="text-end">Acțiuni</th>
@@ -24,10 +25,15 @@
       <tr>
         <td class="fw-semibold">{{ u.username }}</td>
         <td>{{ u.first_name }} {{ u.last_name }}</td>
+        <td>
+          {% if u.is_superuser %}Superuser{% elif u.groups.filter(name="MANAGER").exists() %}Manager{% else %}Angajat{% endif %}
+        </td>
         <td>{% if u.is_active %}Da{% else %}Nu{% endif %}</td>
         <td>{% if u.last_login %}{{ u.last_login }}{% else %}-{% endif %}</td>
         <td class="text-end">
-          <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:history' %}?user={{ u.id }}">Istoric schimbări</a>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:user_edit' u.id %}">Editează</a>
+          <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:user_delete' u.id %}">Șterge</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:history' %}?user={{ u.id }}">Istoric</a>
           <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:access_history' %}?user={{ u.id }}">Accesări</a>
         </td>
       </tr>

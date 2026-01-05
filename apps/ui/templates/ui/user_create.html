@@ -4,11 +4,11 @@
 {% block content %}
 <h2 class="mb-3">Creează cont de angajat</h2>
 
-<div class="card">
-  <div class="card-body">
-    <form method="post" novalidate>
-      {% csrf_token %}
-      {{ form.non_field_errors }}
+  <div class="card">
+    <div class="card-body">
+      <form method="post" novalidate>
+        {% csrf_token %}
+        {{ form.non_field_errors }}
 
       <div class="row g-3">
         <div class="col-md-4">
@@ -25,6 +25,12 @@
           <label class="form-label">Nume</label>
           {{ form.last_name }}
           {{ form.last_name.errors }}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Rol</label>
+          {{ form.role }}
+          {{ form.role.errors }}
         </div>
 
         <div class="col-md-6">
@@ -50,10 +56,6 @@
       <div class="mt-3 d-flex gap-2">
         <button class="btn btn-primary" type="submit">Creează</button>
         <a class="btn btn-outline-secondary" href="{% url 'ui:users_list' %}">Înapoi</a>
-      </div>
-
-      <div class="text-muted small mt-3">
-        Contul creat intră automat în grupul <code>EMPLOYEE</code>.
       </div>
     </form>
   </div>

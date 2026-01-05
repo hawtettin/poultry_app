@@ -16,10 +16,19 @@ urlpatterns = [
     path("mortality/<int:pk>/delete/", views.mortality_delete, name="mortality_delete"),
 
     path("history/", views.history, name="history"),
+    path("access/", views.access_history, name="access_history"),
 
     # Vânzări
     path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
     path("payments/<int:pk>/paid/", views.payment_mark_paid, name="payment_mark_paid"),
+    path("payments/<int:pk>/edit/", views.payment_edit, name="payment_edit"),
+    path("payments/<int:pk>/delete/", views.payment_delete, name="payment_delete"),
+
+    # Utilizatori (admin)
+    path("users/", views.users_list, name="users_list"),
+    path("users/new/", views.user_create, name="user_create"),
+    path("users/<int:pk>/edit/", views.user_edit, name="user_edit"),
+    path("users/<int:pk>/delete/", views.user_delete, name="user_delete"),
 
     path("login/", auth_views.LoginView.as_view(
         template_name="ui/login.html",
