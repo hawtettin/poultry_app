@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from django.urls import path
+from django.urls import path, reverse_lazy
 from django.contrib.auth import views as auth_views
 
 from .forms import BootstrapAuthenticationForm
@@ -25,5 +25,9 @@ urlpatterns = [
         template_name="ui/login.html",
         authentication_form=BootstrapAuthenticationForm,
     ), name="login"),
-    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path(
+        "logout/",
+        auth_views.LogoutView.as_view(next_page=reverse_lazy("ui:login")),
+        name="logout",
+    ),
 ]
