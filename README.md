@@ -66,3 +66,29 @@ UI:
 
 - Pentru ca un utilizator să fie considerat **ADMIN**, trebuie să fie superuser **sau** să fie în grupul Django `ADMIN`.
 - Documentele cu status `locked` nu pot fi editate/șterse (UI + API).
+## Deploy pe Render (fără erori 400/psycopg/gunicorn)
+
+Fișierele din repo includ deja:
+- `build.sh` (pip install + collectstatic + migrate)
+- `start.sh` (pornește gunicorn pe portul Render)
+
+### Setări recomandate în Render
+**Build Command**
+```bash
+bash ./build.sh
+```
+
+**Start Command**
+```bash
+bash ./start.sh
+```
+(sau echivalent: `python -m gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`)
+
+### Environment Variables (Render → Settings → Environment)
+- `DJANGO_SECRET_KEY` = (un secret random)
+- `DJANGO_DEBUG` = `0`
+- `DATABASE_URL` = connection string de la Render Postgres (Internal Database URL recomandat)
+
+Notă:
+- `ALLOWED_HOSTS` este configurat automat pe baza variabilei `RENDER_EXTERNAL_HOSTNAME` setată de Render, ca să eviți `Bad Request (400)` când `DEBUG=False`.
+- Pentru formulare (login/POST) sunt setate automat și `CSRF_TRUSTED_ORIGINS` pentru host-ul Render.

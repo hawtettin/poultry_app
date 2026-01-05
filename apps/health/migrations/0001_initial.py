@@ -1,0 +1,57 @@
+# Generated manually for initial deployment (Render)
+from __future__ import annotations
+
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+import django.utils.timezone
+
+
+class Migration(migrations.Migration):
+    initial = True
+
+    dependencies = [
+        ("core", "0001_initial"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="MortalityEvent",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("date", models.DateField(default=django.utils.timezone.localdate)),
+                ("count", models.PositiveIntegerField()),
+                ("reason", models.CharField(blank=True, default="", max_length=120)),
+                ("notes", models.TextField(blank=True, default="")),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("created_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL)),
+                ("flock", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="mortality_events", to="core.flock")),
+            ],
+            options={
+                "ordering": ["-date", "-id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="Treatment",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("start_date", models.DateField(default=django.utils.timezone.localdate)),
+                ("end_date", models.DateField(default=django.utils.timezone.localdate)),
+                ("product_name", models.CharField(max_length=150)),
+                ("active_substance", models.CharField(blank=True, default="", max_length=150)),
+                ("dose", models.CharField(blank=True, default="", max_length=120)),
+                ("method", models.CharField(choices=[("water", "Apa"), ("feed", "Furaj"), ("injection", "Injectie"), ("other", "Altul")], default="water", max_length=20)),
+                ("withdrawal_days", models.PositiveIntegerField(default=0)),
+                ("withdrawal_end_date", models.DateField(blank=True, null=True)),
+                ("vet_name", models.CharField(blank=True, default="", max_length=120)),
+                ("notes", models.TextField(blank=True, default="")),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("created_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to=settings.AUTH_USER_MODEL)),
+                ("flock", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="treatments", to="core.flock")),
+            ],
+            options={
+                "ordering": ["-start_date", "-id"],
+            },
+        ),
+    ]
