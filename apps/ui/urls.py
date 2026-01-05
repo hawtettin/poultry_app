@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from django.urls import path, reverse_lazy
+from django.urls import path
 from django.contrib.auth import views as auth_views
 
 from .forms import BootstrapAuthenticationForm
@@ -16,27 +16,14 @@ urlpatterns = [
     path("mortality/<int:pk>/delete/", views.mortality_delete, name="mortality_delete"),
 
     path("history/", views.history, name="history"),
-    path("access/", views.access_history, name="access_history"),
 
     # Vânzări
     path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
     path("payments/<int:pk>/paid/", views.payment_mark_paid, name="payment_mark_paid"),
-    path("payments/<int:pk>/edit/", views.payment_edit, name="payment_edit"),
-    path("payments/<int:pk>/delete/", views.payment_delete, name="payment_delete"),
-
-    # Utilizatori (admin)
-    path("users/", views.users_list, name="users_list"),
-    path("users/new/", views.user_create, name="user_create"),
-    path("users/<int:pk>/edit/", views.user_edit, name="user_edit"),
-    path("users/<int:pk>/delete/", views.user_delete, name="user_delete"),
 
     path("login/", auth_views.LoginView.as_view(
         template_name="ui/login.html",
         authentication_form=BootstrapAuthenticationForm,
     ), name="login"),
-    path(
-        "logout/",
-        auth_views.LogoutView.as_view(next_page=reverse_lazy("ui:login")),
-        name="logout",
-    ),
+    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
 ]

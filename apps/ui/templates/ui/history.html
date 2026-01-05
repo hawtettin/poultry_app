@@ -1,36 +1,15 @@
 {% extends "ui/base.html" %}
-{% block title %}Istoric schimbări{% endblock %}
+{% block title %}Istoric operații{% endblock %}
 
 {% block content %}
-<h2 class="mb-3">Istoric schimbări</h2>
-
-{% if is_manager %}
-<div class="card mb-3">
-  <div class="card-body">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-md-4">
-        <label class="form-label">Angajat</label>
-        <select class="form-select" name="user">
-          <option value="">(toți)</option>
-          {% for u in employees %}
-            <option value="{{ u.id }}" {% if selected_user == u.id|stringformat:"s" %}selected{% endif %}>
-              {{ u.username }}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">Zi</label>
-        <input class="form-control" type="date" name="day" value="{{ selected_day }}">
-      </div>
-      <div class="col-md-5 d-flex gap-2">
-        <button class="btn btn-primary" type="submit">Filtrează</button>
-        <a class="btn btn-outline-secondary" href="{% url 'ui:history' %}">Reset</a>
-      </div>
-    </form>
-  </div>
+<h2 class="mb-3">Istoric operații</h2>
+<div class="text-muted mb-2">
+  {% if is_manager %}
+    Vezi toate operațiile.
+  {% else %}
+    Vezi doar operațiile tale.
+  {% endif %}
 </div>
-{% endif %}
 
 <div class="table-responsive">
   <table class="table table-striped align-middle">
@@ -52,10 +31,12 @@
           <td><code>{{ e.model }}</code> #{{ e.object_id }}</td>
           <td>{{ e.message }}</td>
         </tr>
-      {% empty %}
-        <tr><td colspan="5" class="text-muted">Nu există evenimente.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+</div>
+
+<div class="text-muted small">
+  Notă: audit-ul păstrează istoricul inclusiv pentru înregistrări șterse.
 </div>
 {% endblock %}

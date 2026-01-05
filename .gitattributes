@@ -1,0 +1,5 @@
+# Normalize line endings across OS (Linux deploys)
+* text=auto eol=lf
+
+# Windows batch files
+*.bat text eol=crlf

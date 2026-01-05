@@ -8,15 +8,32 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load local env (not committed) + example defaults
 load_dotenv(BASE_DIR / ".env", override=False)
+load_dotenv(BASE_DIR / ".env.example", override=False)
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret")
-DEBUG = os.getenv("DJANGO_DEBUG", "0") in ("1", "true", "True", "yes", "YES")
+# Core
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-change-me")
+DEBUG = os.getenv("DJANGO_DEBUG", "0").lower() in {"1", "true", "yes"}
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".onrender.com", "poultry-app-t0ij.onrender.com"]
-CSRF_TRUSTED_ORIGINS = ["https://*.onrender.com"]
+# Hosts
+_default_hosts = "127.0.0.1,localhost"
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", _default_hosts).split(",") if h.strip()]
+
+# Render convenience (optional)
+_render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+if _render_host and _render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(_render_host)
+
+# CSRF
+CSRF_TRUSTED_ORIGINS: list[str] = []
+_csrf_env = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").strip()
+if _csrf_env:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_env.split(",") if o.strip()]
+elif _render_host:
+    CSRF_TRUSTED_ORIGINS = [f"https://{_render_host}"]
+
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -28,6 +45,7 @@ INSTALLED_APPS = [
 
     "rest_framework",
 
+    # Local apps (feature modules)
     "apps.accounts",
     "apps.core",
     "apps.health",
@@ -93,6 +111,12 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# Django 5+ storage settings
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -104,7 +128,6 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ],
 }
-
 
 # UI auth
 LOGIN_URL = "/login/"
