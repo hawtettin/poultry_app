@@ -1,0 +1,16 @@
+{% extends "ui/base.html" %}
+{% block title %}Șterge plată{% endblock %}
+
+{% block content %}
+<h2 class="mb-3">Șterge plată #{{ payment.id }}</h2>
+
+<div class="alert alert-warning">
+  Confirmă ștergerea plății de <strong>{{ payment.amount }}</strong> pentru <strong>{{ payment.document.partner.name }}</strong>.
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <button class="btn btn-danger" type="submit">Da, șterge</button>
+  <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=sales">Anulează</a>
+</form>
+{% endblock %}
