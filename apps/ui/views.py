@@ -4,6 +4,7 @@ import csv
 from decimal import Decimal
 
 from django.contrib import messages
+from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
@@ -497,3 +498,9 @@ def payment_mark_paid(request, pk: int):
 
     # fallback GET
     return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+
+def logout_redirect(request):
+    """Logout simplu cu redirect imediat la pagina de login."""
+    logout(request)
+    return redirect("ui:login")

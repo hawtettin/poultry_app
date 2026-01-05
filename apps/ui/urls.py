@@ -25,5 +25,5 @@ urlpatterns = [
         template_name="ui/login.html",
         authentication_form=BootstrapAuthenticationForm,
     ), name="login"),
-    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("logout/", views.logout_redirect, name="logout"),
 ]
