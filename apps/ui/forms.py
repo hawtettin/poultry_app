@@ -16,8 +16,9 @@ from apps.finance.models import Document, DocumentLine, Payment, Partner
 
 User = get_user_model()
 ROLE_CHOICES = [
-    ("EMPLOYEE", "Angajat"),
+    ("ADMIN", "Administrator"),
     ("MANAGER", "Manager fermă"),
+    ("EMPLOYEE", "Angajat"),
 ]
 
 
@@ -486,8 +487,11 @@ class UserUpdateForm(forms.ModelForm):
         u: User = self.instance
         # default role = EMPLOYEE
         role = "EMPLOYEE"
-        if u and u.pk and u.groups.filter(name="MANAGER").exists():
-            role = "MANAGER"
+        if u and u.pk:
+            if u.is_superuser or u.groups.filter(name="ADMIN").exists():
+                role = "ADMIN"
+            elif u.groups.filter(name="MANAGER").exists():
+                role = "MANAGER"
         self.fields["role"].initial = role
 
     def _apply_role(self, user, role: str):
