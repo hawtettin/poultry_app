@@ -1,68 +1,68 @@
-# Poultry App
+# Poultry App (Django + DRF)
 
-Aplicație Django (UI + API) pentru gestionarea unei ferme avicole:
-- serii/loturi (hale, sezoane)
-- mortalitate / tratamente
-- finanțe (documente, plăți) + vânzări (UI quick-add)
-- audit log (cine a făcut ce)
+Aplicație de management pentru fermă avicolă (serii/loturi, mortalități, tratamente, financiar, rapoarte) + UI web simplu.
 
-## Rulare local (rapid)
+## Arhitectură (scalabilă)
 
-### 1) Configurează mediul
+Proiectul este împărțit pe aplicații Django ("apps"), ca să poți extinde ușor fiecare zonă:
 
-```bash
-cp .env.example .env
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/Mac
-# source .venv/bin/activate
-pip install -r requirements.txt
-```
+- `apps/accounts` – roluri/permisiuni (ADMIN / MANAGER / EMPLOYEE) + utilitare/servicii pentru provisioning utilizatori
+- `apps/core` – hale, sezoane, loturi
+- `apps/health` – mortalități, tratamente
+- `apps/finance` – parteneri, categorii, documente (cheltuieli / vânzări), plăți
+- `apps/reports` – rapoarte (ex. profit pe sezon)
+- `apps/auditlog` – audit log generic (create/update/delete)
+- `apps/ui` – interfață web (dashboard, mortalități, vânzări, users provisioning)
 
-### 2) Pornește Postgres (opțional, recomandat)
+Logica de roluri este centralizată în `apps/accounts/utils.py` (UI) și `apps/accounts/permissions.py` (DRF), astfel încât poți refolosi verificările în viitor (API/UI).
 
-```bash
-docker compose up -d
-```
+## Funcționalități cerute (implementate)
 
-Dacă nu pornești Postgres, proiectul va folosi SQLite implicit.
+1. **Meniu "Utilizatori" (doar ADMIN)**
+   - adminul poate crea conturi pentru **Angajați (EMPLOYEE)** și **Manageri de fermă (MANAGER)** din UI.
 
-### 3) Migrații + cont admin
+2. **Editare / ștergere vânzări (ADMIN + MANAGER)**
+   - UI: listă vânzări + creare/editare/ștergere pentru `Document` cu `doc_type="sale"`.
+   - API: modificare/ștergere vânzări este restricționată la **MANAGER/ADMIN**.
 
-```bash
-python manage.py makemigrations
-python manage.py migrate
-python manage.py init_roles
-python manage.py createsuperuser
-```
+## Instalare & rulare
 
-### 4) Pornește serverul
+1. Copiază `.env.example` în `.env` (opțional)
+2. Creează venv și instalează dependențe:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # Linux/Mac
+   # sau: .venv\Scripts\activate  # Windows
+   pip install -r requirements.txt
+   ```
+3. Pornește baza de date Postgres:
+   ```bash
+   docker compose up -d
+   ```
+4. Migrează:
+   ```bash
+   python manage.py migrate
+   ```
+5. Creează grupurile de roluri:
+   ```bash
+   python manage.py init_roles
+   ```
+6. Creează superuser:
+   ```bash
+   python manage.py createsuperuser
+   ```
+7. Rulează serverul:
+   ```bash
+   python manage.py runserver
+   ```
 
-```bash
-python manage.py runserver
-```
+UI:
+- http://127.0.0.1:8000/ (dashboard)
+- http://127.0.0.1:8000/sales/ (vânzări)
+- http://127.0.0.1:8000/users/ (utilizatori – doar ADMIN)
+- http://127.0.0.1:8000/history/ (audit)
 
-- UI: `http://127.0.0.1:8000/`
-- Admin: `http://127.0.0.1:8000/admin/`
-- API: `http://127.0.0.1:8000/api/`
+## Note
 
-## Deploy (Render)
-
-În producție, rulează tipic:
-
-```bash
-python manage.py migrate
-python manage.py collectstatic --noinput
-gunicorn config.wsgi:application
-```
-
-Setează variabilele de mediu pe Render:
-- `DJANGO_SECRET_KEY`
-- `DJANGO_DEBUG=0`
-- `DATABASE_URL` (Render Postgres)
-- `DJANGO_ALLOWED_HOSTS` (și/sau `RENDER_EXTERNAL_HOSTNAME` este detectat automat)
-
-## Arhitectură
-
-Vezi `ARCHITECTURE.md` pentru reguli de organizare (cum adaugi/ștergi feature-uri, unde pune logică, etc.).
+- Pentru ca un utilizator să fie considerat **ADMIN**, trebuie să fie superuser **sau** să fie în grupul Django `ADMIN`.
+- Documentele cu status `locked` nu pot fi editate/șterse (UI + API).

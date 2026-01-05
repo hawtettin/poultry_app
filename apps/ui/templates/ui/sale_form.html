@@ -1,0 +1,150 @@
+{% extends "ui/base.html" %}
+
+{% block title %}{% if mode == 'create' %}Vânzare nouă{% else %}Editează vânzare{% endif %}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">
+    {% if mode == 'create' %}Vânzare nouă{% else %}Editează vânzare{% endif %}
+  </h2>
+  <a class="btn btn-outline-secondary" href="{% url 'ui:sales_list' %}">Înapoi la listă</a>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card mb-3">
+    <div class="card-header">Detalii document</div>
+    <div class="card-body">
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">{{ form.date.label }}</label>
+          {{ form.date }}
+          {% if form.date.errors %}<div class="text-danger small">{{ form.date.errors }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ form.doc_no.label }}</label>
+          {{ form.doc_no }}
+          {% if form.doc_no.errors %}<div class="text-danger small">{{ form.doc_no.errors }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ form.status.label }}</label>
+          {{ form.status }}
+          {% if form.status.errors %}<div class="text-danger small">{{ form.status.errors }}</div>{% endif %}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">{{ form.season.label }}</label>
+          {{ form.season }}
+          {% if form.season.errors %}<div class="text-danger small">{{ form.season.errors }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ form.flock.label }}</label>
+          {{ form.flock }}
+          {% if form.flock.errors %}<div class="text-danger small">{{ form.flock.errors }}</div>{% endif %}
+          <div class="form-text">Opțional (dacă vânzarea este asociată unui lot)</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ form.partner.label }}</label>
+          {{ form.partner }}
+          {% if form.partner.errors %}<div class="text-danger small">{{ form.partner.errors }}</div>{% endif %}
+          <div class="form-text">Opțional (client)</div>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">{{ form.currency.label }}</label>
+          {{ form.currency }}
+          {% if form.currency.errors %}<div class="text-danger small">{{ form.currency.errors }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ form.vat.label }}</label>
+          {{ form.vat }}
+          {% if form.vat.errors %}<div class="text-danger small">{{ form.vat.errors }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Total (calculat)</label>
+          <input class="form-control" value="{{ sale.total|default:'0.00' }}" disabled>
+          <div class="form-text">Subtotal: {{ sale.subtotal|default:'0.00' }}</div>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">{{ form.notes.label }}</label>
+          {{ form.notes }}
+          {% if form.notes.errors %}<div class="text-danger small">{{ form.notes.errors }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Linii (produse/servicii)</div>
+    <div class="card-body">
+      {{ formset.management_form }}
+      {% if formset.non_form_errors %}
+        <div class="alert alert-danger">{{ formset.non_form_errors }}</div>
+      {% endif %}
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th style="width: 18%">Categorie</th>
+              <th>Descriere</th>
+              <th style="width: 12%" class="text-end">Cant.</th>
+              <th style="width: 10%">UM</th>
+              <th style="width: 14%" class="text-end">Preț unitar</th>
+              <th style="width: 10%" class="text-center">Șterge</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in formset.forms %}
+              <tr>
+                <td>
+                  {{ f.category }}
+                  {% if f.category.errors %}<div class="text-danger small">{{ f.category.errors }}</div>{% endif %}
+                </td>
+                <td>
+                  {{ f.description }}
+                  {% if f.description.errors %}<div class="text-danger small">{{ f.description.errors }}</div>{% endif %}
+                </td>
+                <td class="text-end">
+                  {{ f.qty }}
+                  {% if f.qty.errors %}<div class="text-danger small">{{ f.qty.errors }}</div>{% endif %}
+                </td>
+                <td>
+                  {{ f.unit }}
+                  {% if f.unit.errors %}<div class="text-danger small">{{ f.unit.errors }}</div>{% endif %}
+                </td>
+                <td class="text-end">
+                  {{ f.unit_price }}
+                  {% if f.unit_price.errors %}<div class="text-danger small">{{ f.unit_price.errors }}</div>{% endif %}
+                </td>
+                <td class="text-center">
+                  {% if f.instance.pk %}
+                    {{ f.DELETE }}
+                  {% else %}
+                    {{ f.DELETE }}
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="text-muted small">
+        Poți adăuga rânduri folosind câmpurile goale de la final (formularul include mereu un rând gol).
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-success" type="submit">Salvează</button>
+    <a class="btn btn-outline-secondary" href="{% url 'ui:sales_list' %}">Anulează</a>
+  </div>
+</form>
+{% endblock %}

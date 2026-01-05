@@ -1,0 +1,65 @@
+{% extends "ui/base.html" %}
+{% block title %}Vânzări{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">Vânzări</h2>
+  {% if can_modify %}
+    <a class="btn btn-primary" href="{% url 'ui:sale_create' %}">+ Vânzare nouă</a>
+  {% endif %}
+</div>
+
+{% if sales %}
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th>Nr document</th>
+          <th>Sezon</th>
+          <th>Lot</th>
+          <th>Client</th>
+          <th class="text-end">Total</th>
+          <th>Status</th>
+          <th class="text-end">Acțiuni</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sales %}
+          <tr>
+            <td>{{ s.date }}</td>
+            <td>{{ s.doc_no|default:"—" }}</td>
+            <td>{{ s.season.name }}</td>
+            <td>{% if s.flock %}{{ s.flock.house.name }} / {{ s.flock.start_date }}{% else %}—{% endif %}</td>
+            <td>{% if s.partner %}{{ s.partner.name }}{% else %}—{% endif %}</td>
+            <td class="text-end">{{ s.total }}</td>
+            <td>
+              {% if s.status == 'locked' %}
+                <span class="badge text-bg-secondary">LOCKED</span>
+              {% elif s.status == 'approved' %}
+                <span class="badge text-bg-success">APROBAT</span>
+              {% else %}
+                <span class="badge text-bg-warning">DRAFT</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              {% if can_modify %}
+                <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:sale_edit' s.id %}">Editează</a>
+                <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:sale_delete' s.id %}">Șterge</a>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="alert alert-info">Nu există vânzări înregistrate încă.</div>
+{% endif %}
+
+<div class="text-muted small mt-3">
+  Notă: doar ADMIN și MANAGER pot edita/șterge vânzări.
+</div>
+{% endblock %}

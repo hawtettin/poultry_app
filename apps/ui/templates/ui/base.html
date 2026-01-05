@@ -1,3 +1,4 @@
+{% load ui_extras %}
 <!doctype html>
 <html lang="ro">
   <head>
@@ -16,10 +17,22 @@
         <div class="collapse navbar-collapse" id="navbars">
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}">Dashboard</a></li>
-            <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}?tab=sales">Vânzări</a></li>
-            <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
+
+            {% if user|in_any_group:'ADMIN,MANAGER' %}
+              <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
+            {% endif %}
+
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:sales_list' %}">Vânzări</a></li>
+
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
+
+            {% if user|in_group:'ADMIN' %}
+              <li class="nav-item"><a class="nav-link" href="{% url 'ui:users_list' %}">Utilizatori</a></li>
+            {% endif %}
+
+            {% if user.is_superuser or user.is_staff %}
+              <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
+            {% endif %}
           </ul>
           <ul class="navbar-nav ms-auto">
             {% if user.is_authenticated %}
