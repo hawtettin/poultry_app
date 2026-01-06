@@ -1,8 +1,8 @@
 {% extends "ui/base.html" %}
-{% block title %}Istoric schimbări{% endblock %}
+{% block title %}Accesări{% endblock %}
 
 {% block content %}
-<h2 class="mb-3">Istoric schimbări</h2>
+<h2 class="mb-3">Accesări (LOGIN/LOGOUT)</h2>
 
 {% if is_manager %}
 <div class="card mb-3">
@@ -25,7 +25,7 @@
       </div>
       <div class="col-md-5 d-flex gap-2">
         <button class="btn btn-primary" type="submit">Filtrează</button>
-        <a class="btn btn-outline-secondary" href="{% url 'ui:history' %}">Reset</a>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:access_history' %}">Reset</a>
       </div>
     </form>
   </div>
@@ -38,9 +38,9 @@
       <tr>
         <th>Data/ora</th>
         <th>Utilizator</th>
-        <th>Acțiune</th>
-        <th>Entitate</th>
-        <th>Detalii</th>
+        <th>Eveniment</th>
+        <th>IP</th>
+        <th>Path</th>
       </tr>
     </thead>
     <tbody>
@@ -48,12 +48,12 @@
         <tr>
           <td>{{ e.created_at }}</td>
           <td>{% if e.actor %}{{ e.actor.username }}{% else %}-{% endif %}</td>
-          <td><span class="badge text-bg-secondary">{{ e.action }}</span></td>
-          <td><code>{{ e.model }}</code> #{{ e.object_id }}</td>
-          <td>{{ e.message }}</td>
+          <td><span class="badge text-bg-secondary">{{ e.event }}</span></td>
+          <td>{{ e.ip_address }}</td>
+          <td><code>{{ e.path }}</code></td>
         </tr>
       {% empty %}
-        <tr><td colspan="5" class="text-muted">Nu există evenimente.</td></tr>
+        <tr><td colspan="5" class="text-muted">Nu există accesări.</td></tr>
       {% endfor %}
     </tbody>
   </table>
