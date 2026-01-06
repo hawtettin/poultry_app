@@ -269,7 +269,7 @@
               <div class="text-muted small mb-1">Top cumpărători (după bani)</div>
               <ol class="mb-0">
                 {% for t in top_buyers %}
-                  <li>{{ t.partner__name|default:"—" }}: {{ t.total }} RON</li>
+                  <li>{{ t.document__partner__name|default:"—" }}: {{ t.total }} RON</li>
                 {% endfor %}
               </ol>
             {% endif %}
@@ -360,7 +360,7 @@
                         <td class="text-end">{{ d.qty_pui_albi }}</td>
                         <td class="text-end">{{ d.qty_pui_colorati }}</td>
                         <td class="text-end">{{ d.qty_furaj }}</td>
-                        <td class="text-end">{{ d.total }}</td>
+                        <td class="text-end">{{ d.bani }}</td>
                         <td class="text-end">
                           {% if d.datorie and d.datorie|floatformat:2 != "0.00" %}
                             <span class="badge text-bg-warning">{{ d.datorie }}</span>

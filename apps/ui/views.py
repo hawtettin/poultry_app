@@ -210,7 +210,7 @@ def dashboard(request):
     sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ("1", "true", "True", "yes")
 
     sales_qs = (
-        Document.objects.filter(doc_type="sale")
+        Document.objects.filter(doc_type="sale", payments__isnull=False).distinct()
         .select_related("flock", "flock__season", "flock__house", "partner")
         .prefetch_related("lines", "payments")
     )
@@ -240,6 +240,7 @@ def dashboard(request):
         d.qty_pui_colorati = int(_sum_qty(d, keys={"pui colorați", "pui colorati"}) or 0)
         d.qty_furaj = _sum_qty(d, keys={"furaj"}).quantize(Decimal("0.001"))
         d.datorie = sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00")).quantize(Decimal("0.01"))
+        d.bani = sum((p.amount for p in d.payments.all() if p.status == "paid"), Decimal("0.00")).quantize(Decimal("0.01"))
 
     # -----------------
     # Datorii pe cumpărător
@@ -278,23 +279,28 @@ def dashboard(request):
         from datetime import timedelta
         report_from = sales_from or (today - timedelta(days=6))
 
-    report_docs = Document.objects.filter(doc_type="sale", date__gte=report_from, date__lte=report_to)
-    report_total_sales = (report_docs.aggregate(s=Sum("total"))["s"] or Decimal("0.00")).quantize(Decimal("0.01"))
+    report_payments = Payment.objects.filter(
+        document__doc_type="sale",
+        document__date__gte=report_from,
+        document__date__lte=report_to,
+    )
+
+    report_total_sales = (report_payments.aggregate(s=Sum("amount"))["s"] or Decimal("0.00")).quantize(Decimal("0.01"))
     report_total_debts = (
-        Payment.objects.filter(status="due", document__in=report_docs)
-        .aggregate(s=Sum("amount"))["s"]
-        or Decimal("0.00")
+        report_payments.filter(status="due").aggregate(s=Sum("amount"))["s"] or Decimal("0.00")
     ).quantize(Decimal("0.01"))
 
-    report_pui_albi = DocumentLine.objects.filter(document__in=report_docs).filter(
+    report_doc_ids = list(report_payments.values_list("document_id", flat=True).distinct())
+
+    report_pui_albi = DocumentLine.objects.filter(document_id__in=report_doc_ids).filter(
         description__iexact="Pui albi"
     ).aggregate(s=Sum("qty"))["s"] or Decimal("0")
 
-    report_pui_colorati = DocumentLine.objects.filter(document__in=report_docs).filter(
+    report_pui_colorati = DocumentLine.objects.filter(document_id__in=report_doc_ids).filter(
         Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati")
     ).aggregate(s=Sum("qty"))["s"] or Decimal("0")
 
-    report_furaj = DocumentLine.objects.filter(document__in=report_docs).filter(
+    report_furaj = DocumentLine.objects.filter(document_id__in=report_doc_ids).filter(
         description__iexact="Furaj"
     ).aggregate(s=Sum("qty"))["s"] or Decimal("0")
 
@@ -302,13 +308,14 @@ def dashboard(request):
     report_furaj = (report_furaj or Decimal("0")).quantize(Decimal("0.001"))
 
     top_buyers = (
-        report_docs.values("partner__name")
-        .annotate(total=Sum("total"))
+        report_payments.filter(status="paid")
+        .values("document__partner__name")
+        .annotate(total=Sum("amount"))
         .order_by("-total")[:7]
     )
 
     top_debtors = (
-        Payment.objects.filter(status="due", document__doc_type="sale", document__date__gte=report_from, document__date__lte=report_to)
+        report_payments.filter(status="due")
         .values("document__partner__name")
         .annotate(total=Sum("amount"))
         .order_by("-total")[:7]
@@ -818,7 +825,7 @@ def sales_export_csv(request):
     sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ("1", "true", "True", "yes")
 
     sales_qs = (
-        Document.objects.filter(doc_type="sale")
+        Document.objects.filter(doc_type="sale", payments__isnull=False).distinct()
         .select_related("flock", "flock__season", "flock__house", "partner")
         .prefetch_related("lines", "payments")
         .order_by("-date", "-id")
@@ -887,7 +894,7 @@ def sales_export_xlsx(request):
     sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ("1", "true", "True", "yes")
 
     sales_qs = (
-        Document.objects.filter(doc_type="sale")
+        Document.objects.filter(doc_type="sale", payments__isnull=False).distinct()
         .select_related("flock", "flock__season", "flock__house", "partner")
         .prefetch_related("lines", "payments")
         .order_by("-date", "-id")
@@ -927,7 +934,7 @@ def sales_export_xlsx(request):
         buyer = d.partner.name if d.partner else ""
         serie = d.flock.season.name if d.flock_id else ""
         hala = d.flock.house.name if d.flock_id else ""
-        bani = (d.total or Decimal("0.00")).quantize(Decimal("0.01"))
+        bani = sum((p.amount for p in d.payments.all() if p.status == "paid"), Decimal("0.00")).quantize(Decimal("0.01"))
 
         ws.append([
             d.date.isoformat() if d.date else "",
