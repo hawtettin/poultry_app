@@ -25,11 +25,13 @@ urlpatterns = [
     path("history/", views.history, name="history"),
 
     # Vânzări
-    path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
     path("sales/<int:pk>/delete/", views.sale_delete, name="sale_delete"),
-    path("payments/<int:pk>/paid/", views.payment_mark_paid, name="payment_mark_paid"),
+    path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
+    path("sales/export.xlsx", views.sales_export_xlsx, name="sales_export_xlsx"),
+    path("payments/ledger/", views.payment_ledger, name="payment_ledger"),
     path("payments/<int:pk>/edit/", views.payment_edit, name="payment_edit"),
     path("payments/<int:pk>/delete/", views.payment_delete, name="payment_delete"),
+    path("payments/<int:pk>/paid/", views.payment_mark_paid, name="payment_mark_paid"),
 
     path("login/", auth_views.LoginView.as_view(
         template_name="ui/login.html",

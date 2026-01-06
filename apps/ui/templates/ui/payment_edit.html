@@ -1,51 +1,68 @@
 {% extends "ui/base.html" %}
+
 {% block title %}Editează plată{% endblock %}
 
 {% block content %}
-<h2 class="mb-3">Editează plată #{{ payment.id }}</h2>
-
-<div class="mb-3 text-muted">
-  Cumpărător: <strong>{{ payment.document.partner.name|default:"—" }}</strong>
-  • Doc: #{{ payment.document.id }}
-  • Monedă: {{ payment.document.currency }}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h3 class="mb-0">Editează plată #{{ p.id }}</h3>
+    <div class="text-muted small">
+      {% if p.document.partner %}
+        Cumpărător: <strong>{{ p.document.partner.name }}</strong>
+      {% endif %}
+      <span class="ms-2">Doc #{{ p.document.id }} • {{ p.document.date }}</span>
+    </div>
+  </div>
+  <div class="text-end">
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
+  </div>
 </div>
 
 <div class="card">
   <div class="card-body">
-    <form method="post" novalidate>
+    <form method="post">
       {% csrf_token %}
-      {{ form.non_field_errors }}
+      <input type="hidden" name="next" value="{{ next_url }}" />
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger">
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
       <div class="row g-3">
-        <div class="col-md-3">
-          <label class="form-label">Scadență</label>
+        <div class="col-12 col-md-3">
+          {{ form.due_date.label_tag }}
           {{ form.due_date }}
-          {{ form.due_date.errors }}
+          {% for e in form.due_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
         </div>
-        <div class="col-md-3">
-          <label class="form-label">Data plății</label>
-          {{ form.paid_date }}
-          {{ form.paid_date.errors }}
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">Suma</label>
-          {{ form.amount }}
-          {{ form.amount.errors }}
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">Status</label>
+        <div class="col-12 col-md-3">
+          {{ form.status.label_tag }}
           {{ form.status }}
-          {{ form.status.errors }}
+          {% for e in form.status.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
         </div>
-        <div class="col-md-4">
-          <label class="form-label">Metodă</label>
+        <div class="col-12 col-md-3">
+          {{ form.paid_date.label_tag }}
+          {{ form.paid_date }}
+          <div class="text-muted small">Pentru status „Plătit”.</div>
+          {% for e in form.paid_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-12 col-md-3">
+          {{ form.method.label_tag }}
           {{ form.method }}
-          {{ form.method.errors }}
+          {% for e in form.method.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+
+        <div class="col-12 col-md-3">
+          {{ form.amount.label_tag }}
+          {{ form.amount }}
+          {% for e in form.amount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
         </div>
       </div>
 
       <div class="mt-3 d-flex gap-2">
         <button class="btn btn-primary" type="submit">Salvează</button>
-        <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=sales">Înapoi</a>
+        <a class="btn btn-outline-secondary" href="{{ next_url }}">Anulează</a>
       </div>
     </form>
   </div>

@@ -4,10 +4,17 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    {#
+      Evită pagini "înghețate" când utilizatorul navighează Back/Forward (BFCache).
+      Ne ajută să vedem imediat modificările (ex: ștergeri în ledger / vânzări noi).
+    #}
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>{% block title %}Ferma Avicolă{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   </head>
-  <body>
+  <body data-autorefresh="{% block autorefresh %}0{% endblock %}">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
       <div class="container-fluid">
         <a class="navbar-brand" href="{% url 'ui:dashboard' %}">Ferma Avicolă</a>
@@ -18,6 +25,7 @@
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}">Dashboard</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}?tab=sales">Vânzări</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:payment_ledger' %}">Ledger plăți</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:access_history' %}">Accesări</a></li>
             {% if user.is_superuser or user|in_groups:"ADMIN" %}
@@ -56,6 +64,45 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      (function(){
+        // Evită pagini "înghețate" când utilizatorul navighează Back/Forward (BFCache)
+        // + refresh pe focus pentru pagini cu multe date (ex: dashboard).
+        const AUTO = (document.body && document.body.dataset && document.body.dataset.autorefresh === "1");
+        const LOADED_AT = Date.now();
+
+        function navWasBackForward(){
+          try {
+            const nav = performance.getEntriesByType && performance.getEntriesByType("navigation");
+            if(nav && nav.length && nav[0].type === "back_forward") return true;
+          } catch(e) {}
+          return false;
+        }
+
+        function maybeRefresh(reason){
+          if(!AUTO) return;
+          // Nu reîncărcăm prea des; doar dacă pagina are "vârsta" > 20s
+          if(Date.now() - LOADED_AT < 20000) return;
+          // Evită reload dacă utilizatorul are focus pe un input/textarea (mai rar pe dashboard, dar safe)
+          const ae = document.activeElement;
+          const tag = ae && ae.tagName ? ae.tagName.toLowerCase() : "";
+          if(tag === "input" || tag === "textarea" || tag === "select") return;
+          window.location.reload();
+        }
+
+        window.addEventListener("pageshow", function(e){
+          if(e.persisted || navWasBackForward()){
+            window.location.reload();
+          }
+        });
+
+        window.addEventListener("focus", function(){ maybeRefresh("focus"); });
+        document.addEventListener("visibilitychange", function(){
+          if(document.visibilityState === "visible") maybeRefresh("visible");
+        });
+      })();
+    </script>
     {% block scripts %}{% endblock %}
   </body>
 </html>

@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -111,17 +109,15 @@ class PaymentViewSet(viewsets.ModelViewSet):
     serializer_class = PaymentSerializer
     permission_classes = [CanManagePayments]
 
+    def get_queryset(self):
+        qs = super().get_queryset().select_related("document", "document__partner", "created_by")
+        u = self.request.user
+        if not u.is_authenticated:
+            return qs.none()
+        if u.is_superuser or u.groups.filter(name__in=["ADMIN", "MANAGER"]).exists():
+            return qs
+        # EMPLOYEE: doar plățile lui
+        return qs.filter(created_by=u)
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
-
-    def perform_destroy(self, instance: Payment):
-        """Când ștergem ultima plată a unei vânzări, ștergem și documentul.
-
-        Altfel, vânzarea ar rămâne în DB și ar afecta stocul/mortalitatea.
-        """
-        doc = instance.document
-        doc_id = doc.id
-        with transaction.atomic():
-            instance.delete()
-            if doc.doc_type == "sale" and not Payment.objects.filter(document_id=doc_id).exists():
-                doc.delete()

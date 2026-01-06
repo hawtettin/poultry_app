@@ -330,10 +330,12 @@ class SaleQuickAddForm(forms.Form):
             raise ValidationError("Completează cel puțin un câmp: pui albi / pui colorați / furaj.")
 
         # total vânzare (BANI)
+        # Important: îl calculăm "line-wise" (cu rotunjire pe linie la 0.01)
+        # ca să corespundă cu DocumentLine.line_total (care este quantize(0.01)).
         total = (
-            (Decimal(pui_albi) * pret_pui_albi)
-            + (Decimal(pui_colorati) * pret_pui_colorati)
-            + (furaj_kg * pret_furaj)
+            (Decimal(pui_albi) * pret_pui_albi).quantize(Decimal("0.01"))
+            + (Decimal(pui_colorati) * pret_pui_colorati).quantize(Decimal("0.01"))
+            + (furaj_kg * pret_furaj).quantize(Decimal("0.01"))
         ).quantize(Decimal("0.01"))
 
         if total <= 0:
@@ -388,7 +390,15 @@ class SaleQuickAddForm(forms.Form):
         return cleaned
 
     def save(self, *, user):
-        """Creează Document (sale) + DocumentLine-uri și, dacă există datorie, Payment status=due."""
+        """Creează Document (sale) + DocumentLine-uri și plăți asociate.
+
+        Convenție (pentru ledger):
+        - Dacă vânzarea are parte încasată pe loc (cash), creăm un Payment status=paid
+          cu suma = total - datorie (paid_date = data vânzării).
+        - Dacă există datorie (>0), creăm un Payment status=due pentru partea restantă.
+
+        Astfel, ledger-ul arată și vânzările plătite integral, nu doar datoriile.
+        """
         date = self.cleaned_data["date"]
         flock: Flock = self.cleaned_data["flock"]
         buyer_name = self.cleaned_data["buyer_name"]
@@ -447,6 +457,21 @@ class SaleQuickAddForm(forms.Form):
         doc.recalc_totals()
         doc.save(update_fields=["subtotal", "total"])
 
+        # 1) Încasat (cash) = total - datorie
+        cash_amount = (doc.total or Decimal("0.00")) - (datorie or Decimal("0.00"))
+        cash_amount = cash_amount.quantize(Decimal("0.01"))
+        if cash_amount > 0:
+            Payment.objects.create(
+                document=doc,
+                due_date=date,
+                paid_date=date,
+                amount=cash_amount,
+                method="cash",
+                status="paid",
+                created_by=user if getattr(user, "is_authenticated", False) else None,
+            )
+
+        # 2) Datorie (restant)
         if datorie and datorie > 0:
             Payment.objects.create(
                 document=doc,
@@ -461,7 +486,10 @@ class SaleQuickAddForm(forms.Form):
 
 
 class PaymentEditForm(forms.ModelForm):
-    """Editare plată (doar pentru cei care au voie să modifice)."""
+    """Editare plată (datorie / plată efectuată).
+
+    Notă: permisiunile sunt aplicate în view (ADMIN/MANAGER orice, EMPLOYEE doar azi + doar ale lui).
+    """
 
     class Meta:
         model = Payment
@@ -469,15 +497,26 @@ class PaymentEditForm(forms.ModelForm):
         widgets = {
             "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "paid_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
-            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
             "method": forms.Select(attrs={"class": "form-select"}),
             "status": forms.Select(attrs={"class": "form-select"}),
         }
 
     def clean(self):
         cleaned = super().clean()
-        status = cleaned.get("status")
+        status = (cleaned.get("status") or "").strip() or "due"
         paid_date = cleaned.get("paid_date")
+
+        # Dacă marcăm ca "paid" și nu există paid_date -> folosim azi.
         if status == "paid" and not paid_date:
-            raise ValidationError("Dacă status = Plătit, completează și data plății.")
+            cleaned["paid_date"] = timezone.localdate()
+
+        # Dacă marcăm ca "due" -> paid_date trebuie gol.
+        if status == "due":
+            cleaned["paid_date"] = None
+
+        amount = cleaned.get("amount")
+        if amount is not None and amount <= 0:
+            raise ValidationError("Suma trebuie să fie pozitivă.")
+
         return cleaned

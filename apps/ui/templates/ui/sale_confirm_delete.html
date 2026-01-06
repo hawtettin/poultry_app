@@ -1,28 +1,62 @@
 {% extends "ui/base.html" %}
+{% block title %}Șterge vânzare{% endblock %}
 
 {% block content %}
-  <div class="card">
-    <div class="card-header">Confirmare ștergere vânzare</div>
-    <div class="card-body">
-      <p class="mb-2">Ștergi definitiv vânzarea <strong>#{{ sale.id }}</strong>?</p>
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h3 class="mb-0">Șterge vânzare #{{ d.id }}</h3>
+    <div class="text-muted small">
+      <span>Data: <strong>{{ d.date }}</strong></span>
+      {% if d.created_at %}<span class="ms-2">Ora: {{ d.created_at|date:"H:i" }}</span>{% endif %}
+      {% if d.partner %}<span class="ms-2">Cumpărător: <strong>{{ d.partner.name }}</strong></span>{% endif %}
+    </div>
+    {% if d.flock_id %}
+      <div class="text-muted small">{{ d.flock.season.name }} • {{ d.flock.house.name }}</div>
+    {% endif %}
+  </div>
+  <div class="text-end">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
+  </div>
+</div>
 
-      <ul class="mb-3">
-        <li>Data: {{ sale.date }}</li>
-        <li>Ora: {% if sale.created_at %}{{ sale.created_at|date:"H:i" }}{% else %}-{% endif %}</li>
-        <li>Cumpărător: {{ sale.partner.name|default:"—" }}</li>
-        <li>Lot: {% if sale.flock_id %}{{ sale.flock.season.name }} • {{ sale.flock.house.name }}{% else %}—{% endif %}</li>
-        <li>Total: {{ sale.total }} {{ sale.currency }}</li>
-      </ul>
+<div class="alert alert-warning">
+  Ești sigur că vrei să ștergi această vânzare? Acțiunea este <strong>ireversibilă</strong>.
+  <div class="small mt-1">
+    Se vor șterge automat și plățile asociate, iar <strong>Nr vânduți</strong> / <strong>Nr curent</strong> se va recalcula.
+  </div>
+</div>
 
-      <div class="alert alert-warning small">
-        Această acțiune șterge și plățile asociate și va modifica rapoartele + calculele de stoc/mortalitate.
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Cantități</div>
+        <ul class="mb-0">
+          <li>Pui albi: <strong>{{ d.qty_pui_albi }}</strong></li>
+          <li>Pui colorați: <strong>{{ d.qty_pui_colorati }}</strong></li>
+          <li>Furaj: <strong>{{ d.qty_furaj }}</strong> kg</li>
+        </ul>
       </div>
-
-      <form method="post" class="d-flex gap-2">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-danger">Șterge definitiv</button>
-        <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=sales">Renunță</a>
-      </form>
     </div>
   </div>
-{% endblock content %}
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Sume</div>
+        <ul class="mb-0">
+          <li>Bani (plătit): <strong>{{ d.bani }}</strong> {{ d.currency }}</li>
+          <li>Datorie: <strong>{{ d.datorie }}</strong> {{ d.currency }}</li>
+          <li>Total document: <strong>{{ d.total }}</strong> {{ d.currency }}</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}" />
+  <button class="btn btn-danger" type="submit">Da, șterge vânzarea</button>
+  <a class="btn btn-outline-secondary" href="{{ next_url }}">Anulează</a>
+</form>
+{% endblock %}
