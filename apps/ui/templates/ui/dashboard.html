@@ -432,17 +432,23 @@
                             <td>{{ p.document.partner.name }}</td>
                             <td class="text-end">{{ p.amount }}</td>
                             <td class="text-end">
-                              <form method="post" action="{% url 'ui:payment_mark_paid' p.id %}" class="d-inline">
-                                {% csrf_token %}
-                                <input type="hidden" name="paid_date" value="{{ today }}" />
-                                <select name="method" class="form-select form-select-sm d-inline w-auto">
-                                  <option value="cash">Cash</option>
-                                  <option value="bank">Bancă</option>
-                                  <option value="card">Card</option>
-                                  <option value="other">Altul</option>
-                                </select>
-                                <button class="btn btn-sm btn-outline-success" type="submit">Plătit</button>
-                              </form>
+                              {% if p.can_modify %}
+                                <form method="post" action="{% url 'ui:payment_mark_paid' p.id %}" class="d-inline">
+                                  {% csrf_token %}
+                                  <input type="hidden" name="paid_date" value="{{ today }}" />
+                                  <select name="method" class="form-select form-select-sm d-inline w-auto">
+                                    <option value="cash">Cash</option>
+                                    <option value="bank">Bancă</option>
+                                    <option value="card">Card</option>
+                                    <option value="other">Altul</option>
+                                  </select>
+                                  <button class="btn btn-sm btn-outline-success" type="submit">Plătit</button>
+                                </form>
+                                <a class="btn btn-sm btn-outline-primary ms-1" href="{% url 'ui:payment_edit' p.id %}">Editează</a>
+                                <a class="btn btn-sm btn-outline-danger ms-1" href="{% url 'ui:payment_delete' p.id %}">Șterge</a>
+                              {% else %}
+                                <span class="text-muted">—</span>
+                              {% endif %}
                             </td>
                           </tr>
                         {% endfor %}

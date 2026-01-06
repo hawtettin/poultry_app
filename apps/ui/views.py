@@ -26,6 +26,7 @@ from .forms import (
     MortalityQuickAddForm,
     MortalityEditForm,
     SaleQuickAddForm,
+    PaymentEditForm,
     StaffUserCreateForm,
 )
 
@@ -55,6 +56,24 @@ def can_modify_mortality(user, m: MortalityEvent) -> bool:
         return True
     # employee: doar ce a creat el
     return (m.created_by_id is not None) and (m.created_by_id == user.id)
+
+
+def can_modify_payment(user, p: Payment) -> bool:
+    """Admin/Manager: orice.
+    Employee: doar plățile lui + doar în ziua curentă.
+    """
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or is_manager(user):
+        return True
+    if not user.groups.filter(name="EMPLOYEE").exists():
+        return False
+    if p.created_by_id != user.id:
+        return False
+    if not getattr(p, "created_at", None):
+        return False
+    today = timezone.localdate()
+    return timezone.localtime(p.created_at).date() == today
 
 
 @login_required
@@ -210,6 +229,10 @@ def dashboard(request):
         )
         .order_by("due_date", "id")[:80]
     )
+
+    # Flags pentru template (Edit/Șterge)
+    for p in due_payments:
+        p.can_modify = can_modify_payment(request.user, p)
 
     # -----------------
     # Raport rapid
@@ -642,6 +665,10 @@ def payment_mark_paid(request, pk: int):
         pk=pk,
     )
 
+    if not can_modify_payment(request.user, p):
+        messages.error(request, "Nu ai drepturi să modifici această plată.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
     if p.status != "due":
         messages.info(request, "Această înregistrare nu mai este scadentă.")
         return redirect(f"{reverse('ui:dashboard')}?tab=sales")
@@ -668,3 +695,69 @@ def payment_mark_paid(request, pk: int):
 
     # fallback GET
     return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+
+@login_required
+def payment_edit(request, pk: int):
+    p = get_object_or_404(
+        Payment.objects.select_related("document", "document__partner"),
+        pk=pk,
+    )
+    if not can_modify_payment(request.user, p):
+        messages.error(request, "Nu ai drepturi să editezi această plată.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+    if request.method == "POST":
+        form = PaymentEditForm(request.POST, instance=p)
+        if form.is_valid():
+            before = snapshot(p)
+            form.save()
+            log_event(
+                actor=request.user,
+                action="UPDATE",
+                instance=p,
+                message=f"UPDATE payment: #{p.id} ({p.amount} {p.document.currency})",
+                before=before,
+                after=snapshot(p),
+                request=request,
+            )
+            messages.success(request, "Plata a fost actualizată.")
+            return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+        messages.error(request, "Nu am putut salva. Verifică datele.")
+    else:
+        form = PaymentEditForm(instance=p)
+
+    return render(request, "ui/payment_edit.html", {"payment": p, "form": form})
+
+
+@login_required
+def payment_delete(request, pk: int):
+    p = get_object_or_404(
+        Payment.objects.select_related("document", "document__partner"),
+        pk=pk,
+    )
+    if not can_modify_payment(request.user, p):
+        messages.error(request, "Nu ai drepturi să ștergi această plată.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+    if request.method == "POST":
+        before = snapshot(p)
+        pid = p.id
+        amount = p.amount
+        currency = p.document.currency
+        p.delete()
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=None,
+            message=f"DELETE payment: #{pid} ({amount} {currency})",
+            before=before,
+            after=None,
+            request=request,
+        )
+        messages.success(request, "Plata a fost ștearsă.")
+        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+
+    return render(request, "ui/payment_confirm_delete.html", {"payment": p})
+
+

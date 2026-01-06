@@ -4,7 +4,7 @@ from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.accounts.permissions import IsEmployeeOrAbove, IsManagerOrAdmin
+from apps.accounts.permissions import IsEmployeeOrAbove, IsManagerOrAdmin, CanManagePayments
 from .models import Partner, Category, Document, DocumentLine, Payment
 
 class PartnerSerializer(serializers.ModelSerializer):
@@ -64,8 +64,18 @@ class DocumentSerializer(serializers.ModelSerializer):
 class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
-        fields = ["id", "document", "due_date", "paid_date", "amount", "method", "status", "created_by"]
-        read_only_fields = ["created_by"]
+        fields = [
+            "id",
+            "document",
+            "due_date",
+            "paid_date",
+            "amount",
+            "method",
+            "status",
+            "created_by",
+            "created_at",
+        ]
+        read_only_fields = ["created_by", "created_at"]
 
 class PartnerViewSet(viewsets.ModelViewSet):
     queryset = Partner.objects.all().order_by("name")
@@ -97,7 +107,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.select_related("document").all()
     serializer_class = PaymentSerializer
-    permission_classes = [IsEmployeeOrAbove]
+    permission_classes = [CanManagePayments]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

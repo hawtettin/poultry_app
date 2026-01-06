@@ -458,3 +458,26 @@ class SaleQuickAddForm(forms.Form):
             )
 
         return doc
+
+
+class PaymentEditForm(forms.ModelForm):
+    """Editare plată (doar pentru cei care au voie să modifice)."""
+
+    class Meta:
+        model = Payment
+        fields = ["due_date", "paid_date", "amount", "method", "status"]
+        widgets = {
+            "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "paid_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "method": forms.Select(attrs={"class": "form-select"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        status = cleaned.get("status")
+        paid_date = cleaned.get("paid_date")
+        if status == "paid" and not paid_date:
+            raise ValidationError("Dacă status = Plătit, completează și data plății.")
+        return cleaned
