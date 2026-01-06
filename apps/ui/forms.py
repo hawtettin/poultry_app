@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django import forms
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.contrib.auth import get_user_model
 from django.forms import inlineformset_factory
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from apps.core.models import House, Season, Flock
 from apps.health.models import MortalityEvent
-from apps.finance.models import Document, DocumentLine, Category, Partner
+from apps.finance.models import Document, DocumentLine, Payment, Category, Partner
 
 
 class BootstrapAuthenticationForm(AuthenticationForm):
@@ -206,6 +208,246 @@ class UserProvisionForm(UserCreationForm):
 # =============================================================
 # Sales: edit/create documents of type "sale"
 # =============================================================
+
+
+
+class SaleQuickAddForm(forms.Form):
+    """Înregistrare rapidă vânzare (design clasic).
+
+    Creează:
+      - Document (doc_type='sale', status='approved')
+      - 1..3 DocumentLine (Pui albi / Pui colorați / Furaj)
+      - opțional Payment (status='due') dacă există datorie
+    """
+
+    date = forms.DateField(
+        label="Data",
+        initial=timezone.localdate,
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+    )
+
+    flock = forms.ModelChoiceField(
+        label="Lot / Serie",
+        queryset=Flock.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    buyer_name = forms.CharField(
+        label="Cumpărător",
+        max_length=200,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "ex: Client SRL"}),
+    )
+
+    pui_albi = forms.IntegerField(
+        label="Pui albi (capete)",
+        min_value=0,
+        initial=0,
+        widget=forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
+    )
+    pret_pui_albi = forms.DecimalField(
+        label="Preț pui albi (RON/cap)",
+        min_value=Decimal("0"),
+        max_digits=14,
+        decimal_places=4,
+        initial=Decimal("0"),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
+    )
+
+    pui_colorati = forms.IntegerField(
+        label="Pui colorați (capete)",
+        min_value=0,
+        initial=0,
+        widget=forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
+    )
+    pret_pui_colorati = forms.DecimalField(
+        label="Preț pui colorați (RON/cap)",
+        min_value=Decimal("0"),
+        max_digits=14,
+        decimal_places=4,
+        initial=Decimal("0"),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
+    )
+
+    furaj_kg = forms.DecimalField(
+        label="Furaj (kg)",
+        min_value=Decimal("0"),
+        max_digits=14,
+        decimal_places=3,
+        initial=Decimal("0"),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.001", "inputmode": "decimal"}),
+    )
+    pret_furaj = forms.DecimalField(
+        label="Preț furaj (RON/kg)",
+        min_value=Decimal("0"),
+        max_digits=14,
+        decimal_places=4,
+        initial=Decimal("0"),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
+    )
+
+    datorie = forms.DecimalField(
+        label="Datorie (RON) – opțional",
+        required=False,
+        min_value=Decimal("0"),
+        max_digits=14,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["flock"].queryset = (
+            Flock.objects.select_related("season", "house")
+            .order_by("-start_date", "-id")
+        )
+
+    def clean(self):
+        cleaned = super().clean()
+
+        date = cleaned.get("date")
+        flock = cleaned.get("flock")
+        buyer_name = (cleaned.get("buyer_name") or "").strip()
+
+        pui_albi = int(cleaned.get("pui_albi") or 0)
+        pui_colorati = int(cleaned.get("pui_colorati") or 0)
+        furaj_kg = cleaned.get("furaj_kg") or Decimal("0")
+
+        pret_pui_albi = cleaned.get("pret_pui_albi") or Decimal("0")
+        pret_pui_colorati = cleaned.get("pret_pui_colorati") or Decimal("0")
+        pret_furaj = cleaned.get("pret_furaj") or Decimal("0")
+
+        datorie = cleaned.get("datorie") or Decimal("0")
+        datorie = datorie.quantize(Decimal("0.01"))
+
+        if not buyer_name:
+            raise ValidationError("Completează cumpărătorul.")
+
+        if pui_albi <= 0 and pui_colorati <= 0 and furaj_kg <= 0:
+            raise ValidationError("Completează cel puțin un câmp: pui albi / pui colorați / furaj.")
+
+        total = (
+            (Decimal(pui_albi) * pret_pui_albi)
+            + (Decimal(pui_colorati) * pret_pui_colorati)
+            + (furaj_kg * pret_furaj)
+        ).quantize(Decimal("0.01"))
+
+        if total <= 0:
+            raise ValidationError("Totalul vânzării este 0. Verifică cantitățile și prețurile.")
+
+        if datorie < 0:
+            raise ValidationError("Datoria nu poate fi negativă.")
+        if datorie > total:
+            raise ValidationError(f"Datoria ({datorie} RON) nu poate depăși totalul ({total} RON).")
+
+        if flock and date:
+            if date < flock.start_date:
+                raise ValidationError("Data vânzării nu poate fi înainte de data populării lotului.")
+
+            mort = (
+                MortalityEvent.objects.filter(flock=flock, date__lte=date)
+                .aggregate(s=Sum("count"))["s"]
+                or 0
+            )
+
+            sold = (
+                DocumentLine.objects.filter(
+                    document__doc_type="sale",
+                    document__flock=flock,
+                    document__date__lte=date,
+                )
+                .filter(
+                    Q(description__iexact="Pui albi")
+                    | Q(description__iexact="Pui colorați")
+                    | Q(description__iexact="Pui colorati")
+                )
+                .aggregate(s=Sum("qty"))["s"]
+                or Decimal("0")
+            )
+
+            available = max(int(flock.initial_count) - int(mort) - int(sold), 0)
+            to_sell = pui_albi + pui_colorati
+            if to_sell > available:
+                raise ValidationError(
+                    f"Stoc insuficient: în lot mai sunt ~{available} capete la {date}. "
+                    f"Ai încercat să vinzi {to_sell} (albi+colorați)."
+                )
+
+        cleaned["buyer_name"] = buyer_name
+        cleaned["_total"] = total
+        cleaned["_datorie"] = datorie
+        return cleaned
+
+    def save(self, *, user):
+        """Creează Document (sale) + linii + datorie (Payment) dacă există."""
+        date = self.cleaned_data["date"]
+        flock: Flock = self.cleaned_data["flock"]
+        buyer_name = self.cleaned_data["buyer_name"]
+
+        pui_albi = int(self.cleaned_data.get("pui_albi") or 0)
+        pui_colorati = int(self.cleaned_data.get("pui_colorati") or 0)
+        furaj_kg: Decimal = self.cleaned_data.get("furaj_kg") or Decimal("0")
+
+        pret_pui_albi: Decimal = self.cleaned_data.get("pret_pui_albi") or Decimal("0")
+        pret_pui_colorati: Decimal = self.cleaned_data.get("pret_pui_colorati") or Decimal("0")
+        pret_furaj: Decimal = self.cleaned_data.get("pret_furaj") or Decimal("0")
+        datorie: Decimal = self.cleaned_data.get("_datorie") or Decimal("0")
+
+        partner, _ = Partner.objects.get_or_create(
+            name=buyer_name,
+            defaults={"partner_type": "client"},
+        )
+
+        doc = Document.objects.create(
+            doc_type="sale",
+            status="approved",
+            season=flock.season,
+            flock=flock,
+            partner=partner,
+            date=date,
+            currency="RON",
+            created_by=user if getattr(user, "is_authenticated", False) else None,
+        )
+
+        if pui_albi > 0:
+            DocumentLine.objects.create(
+                document=doc,
+                description="Pui albi",
+                qty=Decimal(pui_albi),
+                unit="cap",
+                unit_price=pret_pui_albi,
+            )
+        if pui_colorati > 0:
+            DocumentLine.objects.create(
+                document=doc,
+                description="Pui colorați",
+                qty=Decimal(pui_colorati),
+                unit="cap",
+                unit_price=pret_pui_colorati,
+            )
+        if furaj_kg and furaj_kg > 0:
+            DocumentLine.objects.create(
+                document=doc,
+                description="Furaj",
+                qty=furaj_kg,
+                unit="kg",
+                unit_price=pret_furaj,
+            )
+
+        doc.recalc_totals()
+        doc.save(update_fields=["subtotal", "total"])
+
+        if datorie and datorie > 0:
+            Payment.objects.create(
+                document=doc,
+                due_date=date,
+                amount=datorie.quantize(Decimal("0.01")),
+                method="other",
+                status="due",
+                created_by=user if getattr(user, "is_authenticated", False) else None,
+            )
+
+        return doc
+
 
 
 class SaleDocumentForm(forms.ModelForm):

@@ -4,9 +4,12 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2 class="mb-0">Vânzări</h2>
-  {% if can_modify %}
-    <a class="btn btn-primary" href="{% url 'ui:sale_create' %}">+ Vânzare nouă</a>
-  {% endif %}
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="{% url 'ui:sales_quick' %}">+ Înregistrare rapidă</a>
+    {% if can_modify %}
+      <a class="btn btn-outline-primary" href="{% url 'ui:sale_create' %}">Vânzare detaliată</a>
+    {% endif %}
+  </div>
 </div>
 
 {% if sales %}

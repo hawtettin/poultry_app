@@ -23,7 +23,13 @@ urlpatterns = [
     path("sales/<int:pk>/edit/", views.sale_edit, name="sale_edit"),
     path("sales/<int:pk>/delete/", views.sale_delete, name="sale_delete"),
 
-    # Users provisioning (ADMIN only)
+    
+    # Sales quick (design clasic) + export + plăți
+    path("sales/quick/", views.sales_quick, name="sales_quick"),
+    path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
+    path("payments/<int:pk>/paid/", views.payment_mark_paid, name="payment_mark_paid"),
+
+# Users provisioning (ADMIN only)
     path("users/", views.users_list, name="users_list"),
     path("users/new/", views.user_create, name="user_create"),
 

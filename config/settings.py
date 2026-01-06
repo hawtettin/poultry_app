@@ -14,26 +14,7 @@ load_dotenv(BASE_DIR / ".env.example", override=False)
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret")
 DEBUG = os.getenv("DJANGO_DEBUG", "0") in ("1", "true", "True", "yes", "YES")
 
-def _split_env(name: str) -> list[str]:
-    """Split comma-separated env var into a list of non-empty strings."""
-    return [x.strip() for x in os.getenv(name, "").split(",") if x.strip()]
-
-RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME", "")
-
-ALLOWED_HOSTS = _split_env("DJANGO_ALLOWED_HOSTS") or _split_env("ALLOWED_HOSTS")
-if not ALLOWED_HOSTS:
-    ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-if RENDER_EXTERNAL_HOSTNAME:
-    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-
-# CSRF: allow HTTPS origin on Render + any explicitly configured origins
-CSRF_TRUSTED_ORIGINS = _split_env("CSRF_TRUSTED_ORIGINS")
-if RENDER_EXTERNAL_HOSTNAME:
-    CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
-
-# Behind a proxy (Render) we need these to correctly detect HTTPS
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-USE_X_FORWARDED_HOST = True
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -56,7 +37,6 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -106,9 +86,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-
-# Serve static files in production (Render) using WhiteNoise
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

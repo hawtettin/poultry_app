@@ -1,25 +1,33 @@
 from __future__ import annotations
 
+import csv
+from datetime import timedelta
+from decimal import Decimal
+
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 
-from apps.accounts.utils import is_admin, is_manager
+from apps.accounts.utils import is_admin, is_manager, is_employee_or_above
 from apps.auditlog.models import AuditEvent
 from apps.auditlog.utils import log_event, snapshot
 from apps.core.models import Flock
-from apps.finance.models import Document
+from apps.finance.models import Document, DocumentLine, Payment
 from apps.health.models import MortalityEvent
 
 from .forms import (
     CreateSeriesForm,
     MortalityQuickAddForm,
     MortalityEditForm,
+    SaleQuickAddForm,
     SaleDocumentForm,
     SaleLineFormSet,
     UserProvisionForm,
@@ -239,6 +247,291 @@ def _sale_snapshot(doc: Document) -> dict:
         )
     )
     return data
+
+
+
+@login_required
+def sales_quick(request):
+    """Pagina clasică de vânzări (înregistrare rapidă + rapoarte).
+
+    Păstrează /sales/ ca ledger, dar oferă o interfață rapidă pentru înregistrare,
+    similară cu versiunea veche a aplicației.
+    """
+    can_create = is_employee_or_above(request.user)
+    can_advanced = is_manager(request.user) or is_admin(request.user)
+    can_payments = is_manager(request.user) or is_admin(request.user)
+
+    if not can_create:
+        messages.error(request, "Nu ai permisiuni să înregistrezi vânzări.")
+        return redirect("ui:sales_list")
+
+    sale_form = SaleQuickAddForm(prefix="sale")
+    if request.method == "POST" and request.POST.get("_action") == "add_sale":
+        sale_form = SaleQuickAddForm(request.POST, prefix="sale")
+        if sale_form.is_valid():
+            doc = sale_form.save(user=request.user)
+            log_event(
+                actor=request.user,
+                action="CREATE",
+                instance=doc,
+                message=f"CREATE vânzare (rapid): doc#{doc.id} ({doc.total} {doc.currency})",
+                before=None,
+                after=snapshot(doc),
+                request=request,
+            )
+            messages.success(request, "Vânzarea a fost salvată.")
+            return redirect("ui:sales_quick")
+
+        messages.error(request, "Nu am putut salva vânzarea. Verifică datele din formular.")
+
+    # -------------------------
+    # Filtre listă vânzări
+    # -------------------------
+    sales_from = parse_date((request.GET.get("sales_from") or "").strip())
+    sales_to = parse_date((request.GET.get("sales_to") or "").strip())
+    sales_buyer = (request.GET.get("sales_buyer") or "").strip()
+    sales_flock = (request.GET.get("sales_flock") or "").strip()
+    sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ["1", "true", "on", "yes"]
+
+    flocks = (
+        Flock.objects.select_related("season", "house")
+        .order_by("-start_date", "-id")
+    )
+
+    sales_qs = (
+        Document.objects.filter(doc_type="sale")
+        .select_related("partner", "flock", "flock__season", "flock__house")
+        .prefetch_related("lines", "payments")
+    )
+
+    if sales_from:
+        sales_qs = sales_qs.filter(date__gte=sales_from)
+    if sales_to:
+        sales_qs = sales_qs.filter(date__lte=sales_to)
+    if sales_buyer:
+        sales_qs = sales_qs.filter(partner__name__icontains=sales_buyer)
+    if sales_flock:
+        try:
+            sales_qs = sales_qs.filter(flock_id=int(sales_flock))
+        except ValueError:
+            pass
+    if sales_only_debts:
+        sales_qs = sales_qs.filter(payments__status="due").distinct()
+
+    sales_docs = list(sales_qs.order_by("-date", "-id")[:100])
+
+    def _sum_qty(doc: Document, *, keys: set[str]) -> Decimal:
+        total = Decimal("0")
+        for ln in getattr(doc, "lines", []).all():
+            desc = (ln.description or "").strip().lower()
+            if desc in keys:
+                total += (ln.qty or Decimal("0"))
+        return total
+
+    for d in sales_docs:
+        d.qty_pui_albi = int(_sum_qty(d, keys={"pui albi"}) or 0)
+        d.qty_pui_colorati = int(_sum_qty(d, keys={"pui colorați", "pui colorati"}) or 0)
+        d.qty_furaj = (_sum_qty(d, keys={"furaj"}) or Decimal("0")).quantize(Decimal("0.001"))
+        d.datorie = (
+            sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00"))
+        ).quantize(Decimal("0.01"))
+
+    # -------------------------
+    # Datorii / plăți
+    # -------------------------
+    due_payments = (
+        Payment.objects.filter(status="due")
+        .select_related("document", "document__partner")
+        .order_by("due_date", "-id")[:50]
+    )
+
+    debts_by_buyer = (
+        Payment.objects.filter(status="due")
+        .values("document__partner__name")
+        .annotate(total=Sum("amount"))
+        .order_by("-total")[:20]
+    )
+
+    # -------------------------
+    # Raport rapid (implicit: ultimele 7 zile sau range-ul din filtre)
+    # -------------------------
+    today = timezone.localdate()
+    report_from = sales_from or (today - timedelta(days=6))
+    report_to = sales_to or today
+
+    report_docs = Document.objects.filter(doc_type="sale", date__gte=report_from, date__lte=report_to)
+    report_total_sales = (report_docs.aggregate(s=Sum("total"))["s"] or Decimal("0.00")).quantize(Decimal("0.01"))
+    report_total_debts = (
+        Payment.objects.filter(status="due", document__in=report_docs)
+        .aggregate(s=Sum("amount"))["s"]
+        or Decimal("0.00")
+    ).quantize(Decimal("0.01"))
+
+    report_pui_albi = (
+        DocumentLine.objects.filter(document__in=report_docs)
+        .filter(description__iexact="Pui albi")
+        .aggregate(s=Sum("qty"))["s"]
+        or Decimal("0")
+    )
+    report_pui_colorati = (
+        DocumentLine.objects.filter(document__in=report_docs)
+        .filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati"))
+        .aggregate(s=Sum("qty"))["s"]
+        or Decimal("0")
+    )
+    report_furaj = (
+        DocumentLine.objects.filter(document__in=report_docs)
+        .filter(description__iexact="Furaj")
+        .aggregate(s=Sum("qty"))["s"]
+        or Decimal("0")
+    )
+
+    report_pui_total = int(report_pui_albi or 0) + int(report_pui_colorati or 0)
+    report_furaj = (report_furaj or Decimal("0")).quantize(Decimal("0.001"))
+
+    top_buyers = (
+        report_docs.values("partner__name")
+        .annotate(total=Sum("total"))
+        .order_by("-total")[:7]
+    )
+
+    top_debtors = (
+        Payment.objects.filter(status="due", document__doc_type="sale", document__date__gte=report_from, document__date__lte=report_to)
+        .values("document__partner__name")
+        .annotate(total=Sum("amount"))
+        .order_by("-total")[:7]
+    )
+
+    return render(
+        request,
+        "ui/sales_quick.html",
+        {
+            "sale_form": sale_form,
+            "sales": sales_docs,
+            "flocks": flocks,
+            "sales_from": sales_from,
+            "sales_to": sales_to,
+            "sales_buyer": sales_buyer,
+            "sales_flock": int(sales_flock) if sales_flock.isdigit() else None,
+            "sales_only_debts": sales_only_debts,
+            "due_payments": due_payments,
+            "debts_by_buyer": debts_by_buyer,
+            "today": today,
+            "report_from": report_from,
+            "report_to": report_to,
+            "report_total_sales": report_total_sales,
+            "report_total_debts": report_total_debts,
+            "report_pui_total": report_pui_total,
+            "report_furaj": report_furaj,
+            "top_buyers": top_buyers,
+            "top_debtors": top_debtors,
+            "can_advanced": can_advanced,
+            "can_payments": can_payments,
+        },
+    )
+
+
+@login_required
+def sales_export_csv(request):
+    """Export CSV pentru vânzări (folosește aceleași filtre ca pagina rapidă)."""
+    sales_from = parse_date((request.GET.get("sales_from") or "").strip())
+    sales_to = parse_date((request.GET.get("sales_to") or "").strip())
+    sales_buyer = (request.GET.get("sales_buyer") or "").strip()
+    sales_flock = (request.GET.get("sales_flock") or "").strip()
+    sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ["1", "true", "on", "yes"]
+
+    sales_qs = (
+        Document.objects.filter(doc_type="sale")
+        .select_related("partner", "flock")
+        .prefetch_related("lines", "payments")
+    )
+    if sales_from:
+        sales_qs = sales_qs.filter(date__gte=sales_from)
+    if sales_to:
+        sales_qs = sales_qs.filter(date__lte=sales_to)
+    if sales_buyer:
+        sales_qs = sales_qs.filter(partner__name__icontains=sales_buyer)
+    if sales_flock:
+        try:
+            sales_qs = sales_qs.filter(flock_id=int(sales_flock))
+        except ValueError:
+            pass
+    if sales_only_debts:
+        sales_qs = sales_qs.filter(payments__status="due").distinct()
+
+    docs = list(sales_qs.order_by("-date", "-id")[:2000])
+
+    def _sum_qty(doc: Document, *, keys: set[str]) -> Decimal:
+        total = Decimal("0")
+        for ln in getattr(doc, "lines", []).all():
+            desc = (ln.description or "").strip().lower()
+            if desc in keys:
+                total += (ln.qty or Decimal("0"))
+        return total
+
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="vanzari.csv"'
+    writer = csv.writer(response)
+    writer.writerow(["DATA", "ORA", "CUMPARĂTOR", "PUI_ALBI", "PUI_COLORATI", "FURAJ_KG", "BANI", "DATORIE"])
+
+    for d in docs:
+        pui_albi = int(_sum_qty(d, keys={"pui albi"}) or 0)
+        pui_colorati = int(_sum_qty(d, keys={"pui colorați", "pui colorati"}) or 0)
+        furaj = (_sum_qty(d, keys={"furaj"}) or Decimal("0")).quantize(Decimal("0.001"))
+        datorie = (
+            sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00"))
+        ).quantize(Decimal("0.01"))
+        ora = d.created_at.strftime("%H:%M") if getattr(d, "created_at", None) else ""
+        writer.writerow([
+            str(d.date),
+            ora,
+            (d.partner.name if d.partner_id else ""),
+            str(pui_albi),
+            str(pui_colorati),
+            str(furaj),
+            str(d.total),
+            str(datorie),
+        ])
+
+    return response
+
+
+@login_required
+def payment_mark_paid(request, pk: int):
+    """Marchează o datorie (Payment status=due) ca fiind plătită."""
+    if not (is_manager(request.user) or is_admin(request.user)):
+        messages.error(request, "Nu ai permisiuni să marchezi plăți ca fiind plătite.")
+        return redirect("ui:sales_quick")
+
+    p = get_object_or_404(
+        Payment.objects.select_related("document", "document__partner"),
+        pk=pk,
+    )
+
+    if p.status != "due":
+        messages.info(request, "Această înregistrare nu mai este scadentă.")
+        return redirect("ui:sales_quick")
+
+    if request.method == "POST":
+        paid_date = parse_date((request.POST.get("paid_date") or "").strip()) or timezone.localdate()
+        method = (request.POST.get("method") or "cash").strip() or "cash"
+        p.status = "paid"
+        p.paid_date = paid_date
+        p.method = method
+        p.save(update_fields=["status", "paid_date", "method"])
+
+        log_event(
+            actor=request.user,
+            action="UPDATE",
+            instance=p,
+            message=f"PAYMENT paid: #{p.id} ({p.amount} {p.document.currency})",
+            before=None,
+            after=snapshot(p),
+            request=request,
+        )
+        messages.success(request, "Datoria a fost marcată ca plătită.")
+
+    return redirect("ui:sales_quick")
 
 
 @login_required

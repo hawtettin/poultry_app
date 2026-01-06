@@ -22,7 +22,19 @@
               <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
             {% endif %}
 
-            <li class="nav-item"><a class="nav-link" href="{% url 'ui:sales_list' %}">Vânzări</a></li>
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                Vânzări
+              </a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{% url 'ui:sales_quick' %}">Înregistrare rapidă</a></li>
+                <li><a class="dropdown-item" href="{% url 'ui:sales_list' %}">Ledger</a></li>
+                {% if user|in_group:'ADMIN' or user|in_group:'MANAGER' or user.is_superuser %}
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="{% url 'ui:sale_create' %}">Vânzare detaliată</a></li>
+                {% endif %}
+              </ul>
+            </li>
 
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
 
