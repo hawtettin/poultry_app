@@ -22,6 +22,12 @@ class Flock(models.Model):
     house = models.ForeignKey(House, on_delete=models.PROTECT, related_name="flocks")
     start_date = models.DateField()
     initial_count = models.PositiveIntegerField()
+
+    # Inventar pe tip de pui (pentru hale populate mixt).
+    # Pentru compatibilitate cu datele vechi, initial_count rămâne totalul,
+    # iar câmpurile de mai jos țin defalcarea.
+    initial_white_count = models.PositiveIntegerField(default=0)
+    initial_colored_count = models.PositiveIntegerField(default=0)
     breed = models.CharField(max_length=120, blank=True, default="")
     supplier = models.CharField(max_length=120, blank=True, default="")
     notes = models.TextField(blank=True, default="")

@@ -10,7 +10,10 @@ from .models import MortalityEvent, Treatment
 class MortalitySerializer(serializers.ModelSerializer):
     class Meta:
         model = MortalityEvent
-        fields = ["id", "flock", "date", "count", "reason", "notes", "created_by", "created_at"]
+        fields = [
+            "id", "flock", "date", "poultry_type", "count", "reason", "notes",
+            "created_by", "created_at",
+        ]
         read_only_fields = ["created_by", "created_at"]
 
 class TreatmentSerializer(serializers.ModelSerializer):

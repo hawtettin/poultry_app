@@ -28,6 +28,7 @@ from apps.finance.models import Document, DocumentLine, Payment
 
 from .forms import (
     CreateSeriesForm,
+    FlockEditForm,
     MortalityQuickAddForm,
     MortalityEditForm,
     SaleQuickAddForm,
@@ -167,6 +168,7 @@ def dashboard(request):
                 m = MortalityEvent.objects.create(
                     flock=mortality_form.cleaned_data["flock"],
                     date=mortality_form.cleaned_data["date"],
+                    poultry_type=mortality_form.cleaned_data.get("poultry_type") or "white",
                     count=mortality_form.cleaned_data["count"],
                     reason=mortality_form.cleaned_data.get("reason", ""),
                     created_by=request.user,
@@ -175,7 +177,7 @@ def dashboard(request):
                     actor=request.user,
                     action="CREATE",
                     instance=m,
-                    message=f"CREATE mortalitate: -{m.count} (lot {m.flock_id}) la {m.date}",
+                    message=f"CREATE mortalitate: -{m.count} ({m.get_poultry_type_display()}) (lot {m.flock_id}) la {m.date}",
                     before=None,
                     after=snapshot(m),
                     request=request,
@@ -212,23 +214,69 @@ def dashboard(request):
         .order_by("-start_date", "-id")
     )
 
-    # scădem și vânzările (pui albi + pui colorați) ca să fie "nr curent" real
-    sold_rows = (
-        DocumentLine.objects.filter(document__doc_type="sale", document__flock__isnull=False)
-        .filter(
-            Q(description__iexact="Pui albi")
-            | Q(description__iexact="Pui colorați")
-            | Q(description__iexact="Pui colorati")
-        )
+    # Mortalitate pe tip (pui albi / pui colorați)
+    mort_rows = (
+        MortalityEvent.objects
+        .values("flock_id", "poultry_type")
+        .annotate(s=Sum("count"))
+    )
+    mort_map = {
+        (int(r["flock_id"]), str(r["poultry_type"])): int(r["s"] or 0)
+        for r in mort_rows
+    }
+
+    # Vânzări pe tip (derivate din description; păstrăm compatibilitate cu datele existente)
+    sold_white_rows = (
+        DocumentLine.objects
+        .filter(document__doc_type="sale", document__flock__isnull=False)
+        .filter(description__iexact="Pui albi")
         .values("document__flock")
         .annotate(s=Sum("qty"))
     )
-    sold_map = {int(r["document__flock"]): int(r["s"] or 0) for r in sold_rows}
+    sold_colored_rows = (
+        DocumentLine.objects
+        .filter(document__doc_type="sale", document__flock__isnull=False)
+        .filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati"))
+        .values("document__flock")
+        .annotate(s=Sum("qty"))
+    )
+
+    sold_white_map = {int(r["document__flock"]): int(r["s"] or 0) for r in sold_white_rows}
+    sold_colored_map = {int(r["document__flock"]): int(r["s"] or 0) for r in sold_colored_rows}
 
     for f in flocks:
-        f.sold_total = sold_map.get(int(f.id), 0)
-        f.current_count = max(int(f.initial_count) - int(f.mortality_total or 0) - int(f.sold_total or 0), 0)
-        f.mortality_pct = (100.0 * float(f.mortality_total or 0) / float(f.initial_count)) if f.initial_count else 0.0
+        # inventar inițial pe tip (fallback pentru loturi vechi)
+        init_white = int(getattr(f, "initial_white_count", 0) or 0)
+        init_colored = int(getattr(f, "initial_colored_count", 0) or 0)
+        if (init_white + init_colored) <= 0:
+            init_white = int(getattr(f, "initial_count", 0) or 0)
+            init_colored = 0
+        init_total = int(init_white + init_colored)
+
+        # mortalitate / vânzări pe tip
+        mort_white = mort_map.get((int(f.id), "white"), 0)
+        mort_colored = mort_map.get((int(f.id), "colored"), 0)
+        sold_white = sold_white_map.get(int(f.id), 0)
+        sold_colored = sold_colored_map.get(int(f.id), 0)
+
+        # expunem în template
+        f.initial_total = init_total
+        f.initial_white = init_white
+        f.initial_colored = init_colored
+
+        f.mortality_white = mort_white
+        f.mortality_colored = mort_colored
+        f.mortality_total = int(mort_white + mort_colored)
+
+        f.sold_white = sold_white
+        f.sold_colored = sold_colored
+        f.sold_total = int(sold_white + sold_colored)
+
+        f.current_white = max(int(init_white) - int(mort_white) - int(sold_white), 0)
+        f.current_colored = max(int(init_colored) - int(mort_colored) - int(sold_colored), 0)
+        f.current_count = int(f.current_white + f.current_colored)
+
+        f.mortality_pct = (100.0 * float(f.mortality_total) / float(init_total)) if init_total else 0.0
 
     recent = (
         MortalityEvent.objects.select_related("flock", "flock__season", "flock__house", "created_by")
@@ -435,6 +483,46 @@ def create_series(request):
         form = CreateSeriesForm()
 
     return render(request, "ui/create_series.html", {"form": form})
+
+
+@login_required
+def flock_edit(request, pk: int):
+    """Editare lot: defalcare inițială pui albi / pui colorați.
+
+    Doar MANAGER/ADMIN/superuser.
+    """
+
+    if not is_manager(request.user):
+        messages.error(request, "Nu ai permisiuni să editezi loturi. Cere acces de la administrator.")
+        return redirect("ui:dashboard")
+
+    flock = get_object_or_404(Flock.objects.select_related("season", "house"), pk=pk)
+    before = snapshot(flock)
+
+    if request.method == "POST":
+        form = FlockEditForm(request.POST, instance=flock)
+        if form.is_valid():
+            f2 = form.save()
+            after = snapshot(f2)
+            log_event(
+                actor=request.user,
+                action="UPDATE",
+                instance=f2,
+                message=(
+                    f"UPDATE lot #{f2.id}: inițial_albi={before.get('initial_white_count')} -> {after.get('initial_white_count')}, "
+                    f"inițial_colorați={before.get('initial_colored_count')} -> {after.get('initial_colored_count')}"
+                ),
+                before=before,
+                after=after,
+                request=request,
+            )
+            messages.success(request, "Lotul a fost actualizat.")
+            return redirect("ui:dashboard")
+        messages.error(request, "Nu am putut salva modificările. Verifică formularul.")
+    else:
+        form = FlockEditForm(instance=flock)
+
+    return render(request, "ui/flock_edit.html", {"form": form, "flock": flock})
 
 
 @login_required

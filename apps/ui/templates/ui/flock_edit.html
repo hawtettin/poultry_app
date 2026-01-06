@@ -1,0 +1,59 @@
+{% extends "ui/base.html" %}
+{% block title %}Editează lot{% endblock %}
+
+{% block content %}
+<h2 class="mb-3">Editează lot #{{ flock.id }}</h2>
+
+<div class="text-muted mb-3">
+  Serie: <strong>{{ flock.season.name }}</strong> • Hală: <strong>{{ flock.house.name }}</strong> • Populare: {{ flock.start_date }}
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">{{ form.initial_white_count.label }}</label>
+          {{ form.initial_white_count }}
+          {{ form.initial_white_count.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ form.initial_colored_count.label }}</label>
+          {{ form.initial_colored_count }}
+          {{ form.initial_colored_count.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Total inițial (informativ)</label>
+          <input id="totalInitial" class="form-control" type="text" value="{{ flock.initial_count }}" disabled />
+          <div class="form-text">Se recalculează automat la salvare (Albi + Colorați).</div>
+        </div>
+      </div>
+
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Salvează</button>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}">Înapoi</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  // recalcul live (doar UI)
+  (function() {
+    const w = document.getElementById('{{ form.initial_white_count.id_for_label }}');
+    const c = document.getElementById('{{ form.initial_colored_count.id_for_label }}');
+    const out = document.getElementById('totalInitial');
+    function upd() {
+      const a = parseInt(w?.value || '0', 10) || 0;
+      const b = parseInt(c?.value || '0', 10) || 0;
+      out.value = String(a + b);
+    }
+    w?.addEventListener('input', upd);
+    c?.addEventListener('input', upd);
+    upd();
+  })();
+</script>
+{% endblock %}

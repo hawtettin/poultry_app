@@ -14,5 +14,9 @@ class SeasonAdmin(admin.ModelAdmin):
 
 @admin.register(Flock)
 class FlockAdmin(admin.ModelAdmin):
-    list_display = ("id", "season", "house", "start_date", "initial_count", "breed", "supplier")
+    list_display = (
+        "id", "season", "house", "start_date",
+        "initial_count", "initial_white_count", "initial_colored_count",
+        "breed", "supplier",
+    )
     list_filter = ("season", "house")

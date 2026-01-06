@@ -12,6 +12,7 @@
   <li class="list-group-item"><strong>Data:</strong> {{ m.date }}</li>
   <li class="list-group-item"><strong>Serie:</strong> {{ m.flock.season.name }}</li>
   <li class="list-group-item"><strong>Hală:</strong> {{ m.flock.house.name }}</li>
+  <li class="list-group-item"><strong>Tip:</strong> {{ m.get_poultry_type_display }}</li>
   <li class="list-group-item"><strong>Nr:</strong> {{ m.count }}</li>
   <li class="list-group-item"><strong>Motiv:</strong> {{ m.reason }}</li>
 </ul>

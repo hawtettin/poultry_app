@@ -11,6 +11,7 @@ app_name = "ui"
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("series/new/", views.create_series, name="create_series"),
+    path("flocks/<int:pk>/edit/", views.flock_edit, name="flock_edit"),
 
     # Utilizatori (doar ADMIN)
     path("users/", views.users_list, name="users_list"),

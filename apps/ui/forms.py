@@ -103,9 +103,17 @@ class CreateSeriesForm(forms.Form):
         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "ex: Hala 1"}),
     )
 
-    initial_count = forms.IntegerField(
-        label="Număr pui (inițial)",
-        min_value=1,
+    initial_white_count = forms.IntegerField(
+        label="Pui albi (inițial)",
+        min_value=0,
+        initial=0,
+        widget=forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
+    )
+
+    initial_colored_count = forms.IntegerField(
+        label="Pui colorați (inițial)",
+        min_value=0,
+        initial=0,
         widget=forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
     )
 
@@ -127,13 +135,20 @@ class CreateSeriesForm(forms.Form):
             season_name = f"{series_name} {int(year)}"
             if Season.objects.filter(name=season_name).exists():
                 raise ValidationError(f"Sezonul '{season_name}' există deja. Alege alt nume sau alt an.")
+        # Validare stoc inițial (pe tip)
+        w = int(cleaned.get("initial_white_count") or 0)
+        c = int(cleaned.get("initial_colored_count") or 0)
+        if (w + c) <= 0:
+            raise ValidationError("Completează numărul inițial pentru pui albi și/sau pui colorați.")
         return cleaned
 
     def save(self):
         series_name = self.cleaned_data["series_name"].strip()
         year = int(self.cleaned_data["year"])
         start_date = self.cleaned_data["start_date"]
-        initial_count = int(self.cleaned_data["initial_count"])
+        initial_white_count = int(self.cleaned_data.get("initial_white_count") or 0)
+        initial_colored_count = int(self.cleaned_data.get("initial_colored_count") or 0)
+        initial_count = int(initial_white_count + initial_colored_count)
 
         house = self.cleaned_data.get("house_existing")
         house_name = (self.cleaned_data.get("house_name") or "").strip()
@@ -142,8 +157,45 @@ class CreateSeriesForm(forms.Form):
 
         season_name = f"{series_name} {year}"
         season = Season.objects.create(name=season_name, start_date=start_date, is_active=True)
-        flock = Flock.objects.create(season=season, house=house, start_date=start_date, initial_count=initial_count)
+        flock = Flock.objects.create(
+            season=season,
+            house=house,
+            start_date=start_date,
+            initial_count=initial_count,
+            initial_white_count=initial_white_count,
+            initial_colored_count=initial_colored_count,
+        )
         return season, flock
+
+
+class FlockEditForm(forms.ModelForm):
+    """Editare lot: defalcare pui albi / pui colorați.
+
+    Folosim acest formular ca să poți corecta / actualiza loturile existente fără a intra în Django Admin.
+    """
+
+    class Meta:
+        model = Flock
+        fields = ["initial_white_count", "initial_colored_count"]
+        widgets = {
+            "initial_white_count": forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
+            "initial_colored_count": forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        w = int(cleaned.get("initial_white_count") or 0)
+        c = int(cleaned.get("initial_colored_count") or 0)
+        if (w + c) <= 0:
+            raise ValidationError("Totalul inițial trebuie să fie > 0 (completează pui albi și/sau pui colorați).")
+        return cleaned
+
+    def save(self, commit: bool = True):
+        inst: Flock = super().save(commit=False)
+        inst.initial_count = int((inst.initial_white_count or 0) + (inst.initial_colored_count or 0))
+        if commit:
+            inst.save(update_fields=["initial_white_count", "initial_colored_count", "initial_count"])
+        return inst
 
 
 class MortalityQuickAddForm(forms.Form):
@@ -155,6 +207,12 @@ class MortalityQuickAddForm(forms.Form):
     flock = forms.ModelChoiceField(
         label="Lot (serie/hală)",
         queryset=Flock.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    poultry_type = forms.ChoiceField(
+        label="Tip pui",
+        choices=MortalityEvent.POULTRY_TYPES,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     count = forms.IntegerField(
@@ -174,24 +232,68 @@ class MortalityQuickAddForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
-        flock = cleaned.get("flock")
+        date = cleaned.get("date")
+        flock: Flock | None = cleaned.get("flock")
+        ptype = (cleaned.get("poultry_type") or "").strip() or "white"
         count = cleaned.get("count")
 
-        if flock and count:
-            total = MortalityEvent.objects.filter(flock=flock).aggregate(s=Sum("count"))["s"] or 0
-            current = flock.initial_count - int(total)
-            if int(count) > max(current, 0):
-                raise ValidationError(f"Nu poți scădea {count}. În lot mai sunt ~{max(current, 0)} capete.")
+        if flock and date and count:
+            if date < flock.start_date:
+                raise ValidationError("Data mortalității nu poate fi înainte de data populării lotului.")
+
+            # inventar inițial pe tip (fallback pentru date vechi)
+            if ptype == "colored":
+                initial = int(getattr(flock, "initial_colored_count", 0) or 0)
+            else:
+                initial = int(getattr(flock, "initial_white_count", 0) or 0)
+                if initial == 0:
+                    initial = int(getattr(flock, "initial_count", 0) or 0)
+
+            mort = (
+                MortalityEvent.objects.filter(flock=flock, poultry_type=ptype, date__lte=date)
+                .aggregate(s=Sum("count"))["s"]
+                or 0
+            )
+
+            # vânzări pui până la data mortalității (pe tip)
+            if ptype == "colored":
+                sold = (
+                    DocumentLine.objects.filter(
+                        document__doc_type="sale",
+                        document__flock=flock,
+                        document__date__lte=date,
+                    )
+                    .filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati"))
+                    .aggregate(s=Sum("qty"))["s"]
+                    or Decimal("0")
+                )
+            else:
+                sold = (
+                    DocumentLine.objects.filter(
+                        document__doc_type="sale",
+                        document__flock=flock,
+                        document__date__lte=date,
+                    )
+                    .filter(description__iexact="Pui albi")
+                    .aggregate(s=Sum("qty"))["s"]
+                    or Decimal("0")
+                )
+
+            available = max(int(initial) - int(mort) - int(sold), 0)
+            if int(count) > available:
+                label = "pui colorați" if ptype == "colored" else "pui albi"
+                raise ValidationError(f"Nu poți scădea {count} ({label}). În lot mai sunt ~{available} capete la {date}.")
         return cleaned
 
 
 class MortalityEditForm(forms.ModelForm):
     class Meta:
         model = MortalityEvent
-        fields = ["date", "flock", "count", "reason", "notes"]
+        fields = ["date", "flock", "poultry_type", "count", "reason", "notes"]
         widgets = {
             "date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "flock": forms.Select(attrs={"class": "form-select"}),
+            "poultry_type": forms.Select(attrs={"class": "form-select"}),
             "count": forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
             "reason": forms.TextInput(attrs={"class": "form-control"}),
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
@@ -199,18 +301,58 @@ class MortalityEditForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
-        flock = cleaned.get("flock")
+        date = cleaned.get("date")
+        flock: Flock | None = cleaned.get("flock")
+        ptype = (cleaned.get("poultry_type") or "").strip() or "white"
         count = cleaned.get("count")
-        if flock and count:
-            other_total = (
-                MortalityEvent.objects.filter(flock=flock)
+
+        if flock and date and count:
+            if date < flock.start_date:
+                raise ValidationError("Data mortalității nu poate fi înainte de data populării lotului.")
+
+            if ptype == "colored":
+                initial = int(getattr(flock, "initial_colored_count", 0) or 0)
+            else:
+                initial = int(getattr(flock, "initial_white_count", 0) or 0)
+                if initial == 0:
+                    initial = int(getattr(flock, "initial_count", 0) or 0)
+
+            other_mort = (
+                MortalityEvent.objects.filter(flock=flock, poultry_type=ptype, date__lte=date)
                 .exclude(pk=self.instance.pk)
                 .aggregate(s=Sum("count"))["s"]
                 or 0
             )
-            current = flock.initial_count - int(other_total)
-            if int(count) > max(current, 0):
-                raise ValidationError(f"Valoare prea mare. În lot mai sunt ~{max(current, 0)} capete (fără această înregistrare).")
+
+            if ptype == "colored":
+                sold = (
+                    DocumentLine.objects.filter(
+                        document__doc_type="sale",
+                        document__flock=flock,
+                        document__date__lte=date,
+                    )
+                    .filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati"))
+                    .aggregate(s=Sum("qty"))["s"]
+                    or Decimal("0")
+                )
+            else:
+                sold = (
+                    DocumentLine.objects.filter(
+                        document__doc_type="sale",
+                        document__flock=flock,
+                        document__date__lte=date,
+                    )
+                    .filter(description__iexact="Pui albi")
+                    .aggregate(s=Sum("qty"))["s"]
+                    or Decimal("0")
+                )
+
+            available = max(int(initial) - int(other_mort) - int(sold), 0)
+            if int(count) > available:
+                label = "pui colorați" if ptype == "colored" else "pui albi"
+                raise ValidationError(
+                    f"Valoare prea mare. În lot mai sunt ~{available} capete ({label}) la {date} (fără această înregistrare)."
+                )
         return cleaned
 
 
@@ -352,36 +494,58 @@ class SaleQuickAddForm(forms.Form):
             if date < flock.start_date:
                 raise ValidationError("Data vânzării nu poate fi înainte de data populării lotului.")
 
-            # Mortalitate până la data vânzării
-            mort = (
-                MortalityEvent.objects.filter(flock=flock, date__lte=date)
+            # Inventar inițial pe tip (fallback pentru date vechi)
+            initial_white = int(getattr(flock, "initial_white_count", 0) or 0)
+            if initial_white == 0:
+                initial_white = int(getattr(flock, "initial_count", 0) or 0)
+            initial_colored = int(getattr(flock, "initial_colored_count", 0) or 0)
+
+            # Mortalitate până la data vânzării (pe tip)
+            mort_white = (
+                MortalityEvent.objects.filter(flock=flock, poultry_type="white", date__lte=date)
+                .aggregate(s=Sum("count"))["s"]
+                or 0
+            )
+            mort_colored = (
+                MortalityEvent.objects.filter(flock=flock, poultry_type="colored", date__lte=date)
                 .aggregate(s=Sum("count"))["s"]
                 or 0
             )
 
-            # Vânzări pui până la data vânzării (albi+colorați)
-            sold = (
+            # Vânzări până la data vânzării (pe tip)
+            sold_white = (
                 DocumentLine.objects.filter(
                     document__doc_type="sale",
                     document__flock=flock,
                     document__date__lte=date,
                 )
-                .filter(
-                    Q(description__iexact="Pui albi")
-                    | Q(description__iexact="Pui colorați")
-                    | Q(description__iexact="Pui colorati")
+                .filter(description__iexact="Pui albi")
+                .aggregate(s=Sum("qty"))["s"]
+                or Decimal("0")
+            )
+            sold_colored = (
+                DocumentLine.objects.filter(
+                    document__doc_type="sale",
+                    document__flock=flock,
+                    document__date__lte=date,
                 )
+                .filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati"))
                 .aggregate(s=Sum("qty"))["s"]
                 or Decimal("0")
             )
 
-            available = max(int(flock.initial_count) - int(mort) - int(sold), 0)
-            to_sell = pui_albi + pui_colorati
+            avail_white = max(int(initial_white) - int(mort_white) - int(sold_white), 0)
+            avail_colored = max(int(initial_colored) - int(mort_colored) - int(sold_colored), 0)
 
-            if to_sell > available:
+            if pui_albi > avail_white:
                 raise ValidationError(
-                    f"Stoc insuficient: în lot mai sunt ~{available} capete la {date}. "
-                    f"Ai încercat să vinzi {to_sell} (albi+colorați)."
+                    f"Stoc insuficient pentru pui albi: în lot mai sunt ~{avail_white} capete la {date}. "
+                    f"Ai încercat să vinzi {pui_albi}."
+                )
+            if pui_colorati > avail_colored:
+                raise ValidationError(
+                    f"Stoc insuficient pentru pui colorați: în lot mai sunt ~{avail_colored} capete la {date}. "
+                    f"Ai încercat să vinzi {pui_colorati}."
                 )
 
         cleaned["buyer_name"] = buyer_name

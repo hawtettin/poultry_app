@@ -17,7 +17,11 @@ class SeasonSerializer(serializers.ModelSerializer):
 class FlockSerializer(serializers.ModelSerializer):
     class Meta:
         model = Flock
-        fields = ["id", "season", "house", "start_date", "initial_count", "breed", "supplier", "notes"]
+        fields = [
+            "id", "season", "house", "start_date",
+            "initial_count", "initial_white_count", "initial_colored_count",
+            "breed", "supplier", "notes",
+        ]
 
 class HouseViewSet(viewsets.ModelViewSet):
     queryset = House.objects.all().order_by("name")

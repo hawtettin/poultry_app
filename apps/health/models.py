@@ -7,8 +7,14 @@ from django.utils import timezone
 from apps.core.models import Flock
 
 class MortalityEvent(models.Model):
+    POULTRY_TYPES = [
+        ("white", "Pui albi"),
+        ("colored", "Pui colorați"),
+    ]
+
     flock = models.ForeignKey(Flock, on_delete=models.CASCADE, related_name="mortality_events")
     date = models.DateField(default=timezone.localdate)
+    poultry_type = models.CharField(max_length=10, choices=POULTRY_TYPES, default="white")
     count = models.PositiveIntegerField()
     reason = models.CharField(max_length=120, blank=True, default="")
     notes = models.TextField(blank=True, default="")

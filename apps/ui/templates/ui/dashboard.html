@@ -44,6 +44,9 @@
               <th class="text-end">Vânduți</th>
               <th class="text-end">Nr curent</th>
               <th class="text-end">Mortalitate %</th>
+              {% if is_manager %}
+                <th class="text-end">Acțiuni</th>
+              {% endif %}
             </tr>
           </thead>
           <tbody>
@@ -52,11 +55,28 @@
                 <td>{{ f.season.name }}</td>
                 <td>{{ f.house.name }}</td>
                 <td>{{ f.start_date }}</td>
-                <td class="text-end">{{ f.initial_count }}</td>
-                <td class="text-end">{{ f.mortality_total }}</td>
-                <td class="text-end">{{ f.sold_total }}</td>
-                <td class="text-end fw-semibold">{{ f.current_count }}</td>
+                <td class="text-end">
+                  {{ f.initial_total }}
+                  <div class="text-muted small">Albi: {{ f.initial_white }} | Colorați: {{ f.initial_colored }}</div>
+                </td>
+                <td class="text-end">
+                  {{ f.mortality_total }}
+                  <div class="text-muted small">Albi: {{ f.mortality_white }} | Colorați: {{ f.mortality_colored }}</div>
+                </td>
+                <td class="text-end">
+                  {{ f.sold_total }}
+                  <div class="text-muted small">Albi: {{ f.sold_white }} | Colorați: {{ f.sold_colored }}</div>
+                </td>
+                <td class="text-end fw-semibold">
+                  {{ f.current_count }}
+                  <div class="text-muted small fw-normal">Albi: {{ f.current_white }} | Colorați: {{ f.current_colored }}</div>
+                </td>
                 <td class="text-end">{{ f.mortality_pct|floatformat:2 }}%</td>
+                {% if is_manager %}
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:flock_edit' f.id %}">Editează</a>
+                  </td>
+                {% endif %}
               </tr>
             {% endfor %}
           </tbody>
@@ -92,6 +112,12 @@
               </div>
 
               <div class="mb-2">
+                <label class="form-label">{{ mortality_form.poultry_type.label }}</label>
+                {{ mortality_form.poultry_type }}
+                {{ mortality_form.poultry_type.errors }}
+              </div>
+
+              <div class="mb-2">
                 <label class="form-label">{{ mortality_form.count.label }}</label>
                 {{ mortality_form.count }}
                 {{ mortality_form.count.errors }}
@@ -121,6 +147,7 @@
                       <th>Data</th>
                       <th>Serie</th>
                       <th>Hală</th>
+                      <th>Tip</th>
                       <th class="text-end">Nr</th>
                       <th>Motiv</th>
                       <th>Autor</th>
@@ -133,6 +160,7 @@
                         <td>{{ m.date }}</td>
                         <td>{{ m.flock.season.name }}</td>
                         <td>{{ m.flock.house.name }}</td>
+                        <td>{{ m.get_poultry_type_display }}</td>
                         <td class="text-end">{{ m.count }}</td>
                         <td>{{ m.reason }}</td>
                         <td>{% if m.created_by %}{{ m.created_by.username }}{% else %}-{% endif %}</td>
