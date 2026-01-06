@@ -32,6 +32,9 @@
               <li class="nav-item"><a class="nav-link" href="{% url 'ui:users_list' %}">Utilizatori</a></li>
             {% endif %}
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
+            {% if user.is_superuser or user|in_groups:"ADMIN,MANAGER" %}
+              <li class="nav-item"><a class="nav-link text-warning" href="{% url 'ui:cleanup_all' %}">Curățare totală</a></li>
+            {% endif %}
             <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
           </ul>
           <ul class="navbar-nav ms-auto">

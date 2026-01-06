@@ -20,11 +20,11 @@ from django.utils.dateparse import parse_date
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 
-from apps.core.models import Flock
-from apps.health.models import MortalityEvent
+from apps.core.models import Flock, House, Season
+from apps.health.models import MortalityEvent, Treatment
 from apps.auditlog.utils import log_event, snapshot
-from apps.auditlog.models import AuditEvent
-from apps.finance.models import Document, DocumentLine, Payment
+from apps.auditlog.models import AuditEvent, AccessLog
+from apps.finance.models import Document, DocumentLine, Payment, Partner, Category
 
 from .forms import (
     CreateSeriesForm,
@@ -482,7 +482,9 @@ def create_series(request):
     else:
         form = CreateSeriesForm()
 
-    return render(request, "ui/create_series.html", {"form": form})
+    houses = House.objects.annotate(flock_count=Count("flocks")).order_by("name")
+
+    return render(request, "ui/create_series.html", {"form": form, "houses": houses})
 
 
 @login_required
@@ -523,6 +525,238 @@ def flock_edit(request, pk: int):
         form = FlockEditForm(instance=flock)
 
     return render(request, "ui/flock_edit.html", {"form": form, "flock": flock})
+
+
+
+@login_required
+def flock_delete(request, pk: int):
+    """Șterge un lot (Flock) + toate datele asociate lui.
+
+    Include:
+      - Documente pe lot (vânzări / cheltuieli) + linii + plăți (cascade)
+      - Mortalități + tratamente (cascade)
+    """
+
+    if not is_manager(request.user):
+        messages.error(request, "Nu ai permisiuni să ștergi loturi. Cere acces de la administrator.")
+        return redirect("ui:dashboard")
+
+    flock = get_object_or_404(Flock.objects.select_related("season", "house"), pk=pk)
+
+    default_next = reverse("ui:dashboard") + "?tab=flocks"
+    next_url = safe_next_url(request, default_next)
+
+    # Statistici pentru pagina de confirmare
+    docs_qs = Document.objects.filter(flock=flock)
+    docs_count = docs_qs.count()
+    lines_count = DocumentLine.objects.filter(document__flock=flock).count()
+    payments_count = Payment.objects.filter(document__flock=flock).count()
+    mortality_count = MortalityEvent.objects.filter(flock=flock).count()
+    treatments_count = Treatment.objects.filter(flock=flock).count()
+
+    sold_white = (
+        DocumentLine.objects
+        .filter(document__doc_type="sale", document__flock=flock, description__iexact="Pui albi")
+        .aggregate(s=Sum("qty"))["s"]
+        or Decimal("0")
+    )
+    sold_colored = (
+        DocumentLine.objects
+        .filter(document__doc_type="sale", document__flock=flock)
+        .filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati"))
+        .aggregate(s=Sum("qty"))["s"]
+        or Decimal("0")
+    )
+    sold_total = int(sold_white or 0) + int(sold_colored or 0)
+
+    if request.method == "POST":
+        before = snapshot(flock)
+        season = flock.season
+        house = flock.house
+
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=flock,
+            message=f"DELETE lot #{flock.id}: {season.name} / {house.name}",
+            before=before,
+            after=None,
+            request=request,
+        )
+
+        with transaction.atomic():
+            # 1) ștergem documentele pe lot (Document.flock este PROTECT, deci trebuie înainte de flock.delete())
+            docs_qs.delete()  # cascade: lines + payments
+            # 2) ștergem lotul (cascade: mortalități + tratamente)
+            flock.delete()
+
+            # 3) dacă sezonul rămâne fără loturi și fără documente, îl ștergem (ca să poți recrea aceeași serie)
+            try:
+                if (not Flock.objects.filter(season=season).exists()) and (not Document.objects.filter(season=season).exists()):
+                    season.delete()
+            except Exception:
+                pass
+
+        messages.success(request, "Lotul a fost șters definitiv. (Stocurile / vânzările se recalculează automat)")
+        return redirect(next_url)
+
+    return render(
+        request,
+        "ui/flock_confirm_delete.html",
+        {
+            "flock": flock,
+            "next_url": next_url,
+            "docs_count": docs_count,
+            "lines_count": lines_count,
+            "payments_count": payments_count,
+            "mortality_count": mortality_count,
+            "treatments_count": treatments_count,
+            "sold_white": int(sold_white or 0),
+            "sold_colored": int(sold_colored or 0),
+            "sold_total": sold_total,
+        },
+    )
+
+
+@login_required
+def house_delete(request, pk: int):
+    """Șterge o hală (House) + toate loturile din ea + datele aferente.
+
+    Atenție: acțiune ireversibilă.
+    """
+
+    if not is_manager(request.user):
+        messages.error(request, "Nu ai permisiuni să ștergi hale. Cere acces de la administrator.")
+        return redirect("ui:dashboard")
+
+    house = get_object_or_404(House, pk=pk)
+
+    default_next = reverse("ui:create_series")
+    next_url = safe_next_url(request, default_next)
+
+    flocks = list(Flock.objects.filter(house=house).select_related("season"))
+
+    # Statistici pentru confirmare
+    flocks_count = len(flocks)
+    docs_count = Document.objects.filter(flock__house=house).count()
+    payments_count = Payment.objects.filter(document__flock__house=house).count()
+    lines_count = DocumentLine.objects.filter(document__flock__house=house).count()
+    mortality_count = MortalityEvent.objects.filter(flock__house=house).count()
+    treatments_count = Treatment.objects.filter(flock__house=house).count()
+
+    if request.method == "POST":
+        before = snapshot(house)
+
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=house,
+            message=f"DELETE hală #{house.id}: {house.name} (și toate loturile din hală)",
+            before=before,
+            after=None,
+            request=request,
+        )
+
+        with transaction.atomic():
+            # Ștergem fiecare lot + documente
+            for f in flocks:
+                season = f.season
+
+                Document.objects.filter(flock=f).delete()  # cascade payments + lines
+                f.delete()  # cascade mortality + treatments
+
+                # Ștergem sezonul dacă a rămas gol (și fără documente)
+                try:
+                    if (not Flock.objects.filter(season=season).exists()) and (not Document.objects.filter(season=season).exists()):
+                        season.delete()
+                except Exception:
+                    pass
+
+            # În final, ștergem hala
+            house.delete()
+
+        messages.success(request, "Hala a fost ștearsă definitiv (împreună cu toate loturile și documentele din ea).")
+        return redirect(next_url)
+
+    return render(
+        request,
+        "ui/house_confirm_delete.html",
+        {
+            "house": house,
+            "flocks": flocks,
+            "next_url": next_url,
+            "flocks_count": flocks_count,
+            "docs_count": docs_count,
+            "lines_count": lines_count,
+            "payments_count": payments_count,
+            "mortality_count": mortality_count,
+            "treatments_count": treatments_count,
+        },
+    )
+
+
+@login_required
+def cleanup_all(request):
+    """Curățare totală: șterge toate datele operaționale (loturi, hale, vânzări, mortalitate, etc).
+
+    Nu șterge utilizatorii/grupurile (ca să nu te blochezi din aplicație).
+    """
+
+    if not is_manager(request.user):
+        messages.error(request, "Nu ai permisiuni să faci curățare totală. Cere acces de la administrator.")
+        return redirect("ui:dashboard")
+
+    default_next = reverse("ui:dashboard")
+    next_url = safe_next_url(request, default_next)
+
+    # Statistici pentru confirmare
+    counts = {
+        "houses": House.objects.count(),
+        "seasons": Season.objects.count(),
+        "flocks": Flock.objects.count(),
+        "mortalities": MortalityEvent.objects.count(),
+        "treatments": Treatment.objects.count(),
+        "documents": Document.objects.count(),
+        "document_lines": DocumentLine.objects.count(),
+        "payments": Payment.objects.count(),
+        "partners": Partner.objects.count(),
+        "categories": Category.objects.count(),
+        "audit_events": AuditEvent.objects.count(),
+        "access_logs": AccessLog.objects.count(),
+    }
+
+    if request.method == "POST":
+        confirm_text = (request.POST.get("confirm_text") or "").strip().upper()
+        if confirm_text not in ("STERGE TOT", "ȘTERGE TOT", "DELETE ALL", "DELETE"):
+            messages.error(request, "Confirmare greșită. Scrie exact: STERGE TOT")
+            return render(request, "ui/cleanup_confirm.html", {"counts": counts, "next_url": next_url})
+
+        # Notă: nu logăm în audit aici, pentru că audit-ul se șterge (site clean).
+        with transaction.atomic():
+            # 1) Documente (cascade: plăți + linii)
+            Document.objects.all().delete()
+
+            # 2) Sănătate / loturi (mortalități și tratamente oricum sunt CASCADE la ștergere de lot)
+            MortalityEvent.objects.all().delete()
+            Treatment.objects.all().delete()
+            Flock.objects.all().delete()
+
+            # 3) Serii / hale
+            Season.objects.all().delete()
+            House.objects.all().delete()
+
+            # 4) Parteneri / categorii
+            Partner.objects.all().delete()
+            Category.objects.all().delete()
+
+            # 5) Audit / accesări
+            AuditEvent.objects.all().delete()
+            AccessLog.objects.all().delete()
+
+        messages.success(request, "Curățare totală completă: toate datele au fost șterse. Aplicația este acum 'clean'.")
+        return redirect(next_url)
+
+    return render(request, "ui/cleanup_confirm.html", {"counts": counts, "next_url": next_url})
 
 
 @login_required

@@ -1,0 +1,64 @@
+{% extends "ui/base.html" %}
+{% block title %}Curățare totală{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h3 class="mb-0">Curățare totală</h3>
+    <div class="text-muted small">Ștergere completă a tuturor datelor operaționale (fără utilizatori)</div>
+  </div>
+  <div class="text-end">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
+  </div>
+</div>
+
+<div class="alert alert-danger">
+  <div class="fw-semibold">ATENȚIE: această acțiune șterge definitiv toate datele!</div>
+  <div class="small mt-1">
+    După curățare, aplicația va fi goală (0 loturi, 0 vânzări, 0 mortalitate etc).
+    <br/>
+    <strong>Nu se șterg utilizatorii</strong> (ca să te poți loga în continuare).
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="text-muted small mb-2">Ce se va șterge (număr de înregistrări curente)</div>
+    <div class="row g-2">
+      <div class="col-6 col-md-4">Hale: <strong>{{ counts.houses }}</strong></div>
+      <div class="col-6 col-md-4">Serii/Sezoane: <strong>{{ counts.seasons }}</strong></div>
+      <div class="col-6 col-md-4">Loturi: <strong>{{ counts.flocks }}</strong></div>
+
+      <div class="col-6 col-md-4">Mortalități: <strong>{{ counts.mortalities }}</strong></div>
+      <div class="col-6 col-md-4">Tratamente: <strong>{{ counts.treatments }}</strong></div>
+
+      <div class="col-6 col-md-4">Documente: <strong>{{ counts.documents }}</strong></div>
+      <div class="col-6 col-md-4">Linii document: <strong>{{ counts.document_lines }}</strong></div>
+      <div class="col-6 col-md-4">Plăți: <strong>{{ counts.payments }}</strong></div>
+
+      <div class="col-6 col-md-4">Parteneri: <strong>{{ counts.partners }}</strong></div>
+      <div class="col-6 col-md-4">Categorii: <strong>{{ counts.categories }}</strong></div>
+
+      <div class="col-6 col-md-4">Audit events: <strong>{{ counts.audit_events }}</strong></div>
+      <div class="col-6 col-md-4">Accesări: <strong>{{ counts.access_logs }}</strong></div>
+    </div>
+  </div>
+</div>
+
+<form method="post" class="card border-danger">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}" />
+  <div class="card-body">
+    <div class="mb-2">
+      <label class="form-label fw-semibold">Confirmare</label>
+      <div class="form-text mb-2">
+        Ca să confirmi ștergerea totală, scrie exact: <strong>STERGE TOT</strong>
+      </div>
+      <input type="text" name="confirm_text" class="form-control" placeholder="STERGE TOT" autocomplete="off" />
+    </div>
+
+    <button class="btn btn-danger" type="submit">Da, șterge TOT</button>
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Anulează</a>
+  </div>
+</form>
+{% endblock %}

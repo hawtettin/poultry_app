@@ -75,6 +75,7 @@
                 {% if is_manager %}
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:flock_edit' f.id %}">Editează</a>
+                    <a class="btn btn-sm btn-outline-danger ms-1" href="{% url 'ui:flock_delete' f.id %}?next={{ request.get_full_path|urlencode }}">Șterge</a>
                   </td>
                 {% endif %}
               </tr>

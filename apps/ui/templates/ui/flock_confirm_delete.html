@@ -1,0 +1,59 @@
+{% extends "ui/base.html" %}
+{% block title %}Șterge lot{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h3 class="mb-0">Șterge lot #{{ flock.id }}</h3>
+    <div class="text-muted small">
+      <strong>{{ flock.season.name }}</strong> • <strong>{{ flock.house.name }}</strong> • Populare: {{ flock.start_date }}
+    </div>
+  </div>
+  <div class="text-end">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
+  </div>
+</div>
+
+<div class="alert alert-danger">
+  Ești sigur că vrei să ștergi acest lot? Acțiunea este <strong>ireversibilă</strong>.
+  <div class="small mt-1">
+    Se vor șterge automat și documentele (vânzări/cheltuieli) pe lot, cu plăți și linii, plus mortalități și tratamente.
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Vânzări (pui) detectate din liniile de vânzare</div>
+        <ul class="mb-0">
+          <li>Pui albi vânduți: <strong>{{ sold_white }}</strong></li>
+          <li>Pui colorați vânduți: <strong>{{ sold_colored }}</strong></li>
+          <li>Total pui vânduți: <strong>{{ sold_total }}</strong></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Ce se șterge</div>
+        <ul class="mb-0">
+          <li>Documente pe lot: <strong>{{ docs_count }}</strong></li>
+          <li>Linii document: <strong>{{ lines_count }}</strong></li>
+          <li>Plăți: <strong>{{ payments_count }}</strong></li>
+          <li>Mortalități: <strong>{{ mortality_count }}</strong></li>
+          <li>Tratamente: <strong>{{ treatments_count }}</strong></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}" />
+  <button class="btn btn-danger" type="submit">Da, șterge lotul</button>
+  <a class="btn btn-outline-secondary" href="{{ next_url }}">Anulează</a>
+</form>
+{% endblock %}

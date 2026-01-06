@@ -12,6 +12,9 @@ urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("series/new/", views.create_series, name="create_series"),
     path("flocks/<int:pk>/edit/", views.flock_edit, name="flock_edit"),
+    path("flocks/<int:pk>/delete/", views.flock_delete, name="flock_delete"),
+    path("houses/<int:pk>/delete/", views.house_delete, name="house_delete"),
+    path("maintenance/cleanup/", views.cleanup_all, name="cleanup_all"),
 
     # Utilizatori (doar ADMIN)
     path("users/", views.users_list, name="users_list"),
