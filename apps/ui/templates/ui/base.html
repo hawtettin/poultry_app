@@ -1,4 +1,3 @@
-{% load ui_extras %}
 <!doctype html>
 <html lang="ro">
   <head>
@@ -17,34 +16,10 @@
         <div class="collapse navbar-collapse" id="navbars">
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}">Dashboard</a></li>
-
-            {% if user|in_any_group:'ADMIN,MANAGER' %}
-              <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
-            {% endif %}
-
-            <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                Vânzări
-              </a>
-              <ul class="dropdown-menu">
-                <li><a class="dropdown-item" href="{% url 'ui:sales_quick' %}">Înregistrare rapidă</a></li>
-                <li><a class="dropdown-item" href="{% url 'ui:sales_list' %}">Ledger</a></li>
-                {% if user|in_group:'ADMIN' or user|in_group:'MANAGER' or user.is_superuser %}
-                  <li><hr class="dropdown-divider"></li>
-                  <li><a class="dropdown-item" href="{% url 'ui:sale_create' %}">Vânzare detaliată</a></li>
-                {% endif %}
-              </ul>
-            </li>
-
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}?tab=sales">Vânzări</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
-
-            {% if user|in_group:'ADMIN' %}
-              <li class="nav-item"><a class="nav-link" href="{% url 'ui:users_list' %}">Utilizatori</a></li>
-            {% endif %}
-
-            {% if user.is_superuser or user.is_staff %}
-              <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
-            {% endif %}
+            <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
           </ul>
           <ul class="navbar-nav ms-auto">
             {% if user.is_authenticated %}

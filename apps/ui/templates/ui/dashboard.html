@@ -21,6 +21,11 @@
       Mortalitate
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="sales-tab" data-bs-toggle="tab" data-bs-target="#sales" type="button" role="tab">
+      Vânzări
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content pt-3">
@@ -35,6 +40,7 @@
               <th>Data populare</th>
               <th class="text-end">Nr inițial</th>
               <th class="text-end">Mortalitate</th>
+              <th class="text-end">Vânduți</th>
               <th class="text-end">Nr curent</th>
               <th class="text-end">Mortalitate %</th>
             </tr>
@@ -47,6 +53,7 @@
                 <td>{{ f.start_date }}</td>
                 <td class="text-end">{{ f.initial_count }}</td>
                 <td class="text-end">{{ f.mortality_total }}</td>
+                <td class="text-end">{{ f.sold_total }}</td>
                 <td class="text-end fw-semibold">{{ f.current_count }}</td>
                 <td class="text-end">{{ f.mortality_pct|floatformat:2 }}%</td>
               </tr>
@@ -65,7 +72,7 @@
         <div class="card">
           <div class="card-header">Adaugă mortalitate (Enter = salvează)</div>
           <div class="card-body">
-            <form method="post" novalidate>
+            <form method="post" id="mortalityForm" novalidate>
               {% csrf_token %}
               <input type="hidden" name="_action" value="add_mortality" />
               {{ mortality_form.non_field_errors }}
@@ -148,36 +155,384 @@
         </div>
       </div>
     </div>
-
   </div>
+
+  <div class="tab-pane fade" id="sales" role="tabpanel">
+    <div class="row g-3">
+      <div class="col-lg-5">
+        <div class="card">
+          <div class="card-header">Adaugă vânzare</div>
+          <div class="card-body">
+            <form method="post" id="saleForm" novalidate>
+              {% csrf_token %}
+              <input type="hidden" name="_action" value="add_sale" />
+              {{ sale_form.non_field_errors }}
+
+              <div class="mb-2">
+                <label class="form-label">{{ sale_form.date.label }}</label>
+                {{ sale_form.date }}
+                {{ sale_form.date.errors }}
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">{{ sale_form.flock.label }}</label>
+                {{ sale_form.flock }}
+                {{ sale_form.flock.errors }}
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">{{ sale_form.buyer_name.label }}</label>
+                {{ sale_form.buyer_name }}
+                {{ sale_form.buyer_name.errors }}
+              </div>
+
+              <div class="row g-2">
+                <div class="col-6">
+                  <label class="form-label">{{ sale_form.pui_albi.label }}</label>
+                  {{ sale_form.pui_albi }}
+                  {{ sale_form.pui_albi.errors }}
+                </div>
+                <div class="col-6">
+                  <label class="form-label">{{ sale_form.pret_pui_albi.label }}</label>
+                  {{ sale_form.pret_pui_albi }}
+                  {{ sale_form.pret_pui_albi.errors }}
+                </div>
+              </div>
+
+              <div class="row g-2 mt-1">
+                <div class="col-6">
+                  <label class="form-label">{{ sale_form.pui_colorati.label }}</label>
+                  {{ sale_form.pui_colorati }}
+                  {{ sale_form.pui_colorati.errors }}
+                </div>
+                <div class="col-6">
+                  <label class="form-label">{{ sale_form.pret_pui_colorati.label }}</label>
+                  {{ sale_form.pret_pui_colorati }}
+                  {{ sale_form.pret_pui_colorati.errors }}
+                </div>
+              </div>
+
+              <div class="row g-2 mt-1">
+                <div class="col-6">
+                  <label class="form-label">{{ sale_form.furaj_kg.label }}</label>
+                  {{ sale_form.furaj_kg }}
+                  {{ sale_form.furaj_kg.errors }}
+                </div>
+                <div class="col-6">
+                  <label class="form-label">{{ sale_form.pret_furaj.label }}</label>
+                  {{ sale_form.pret_furaj }}
+                  {{ sale_form.pret_furaj.errors }}
+                </div>
+              </div>
+
+              <div class="mb-2 mt-2">
+                <label class="form-label">{{ sale_form.datorie.label }}</label>
+                {{ sale_form.datorie }}
+                {{ sale_form.datorie.errors }}
+                <div class="form-text">Datoria este opțională. Dacă o completezi, apare automat la „Datorii pe cumpărător”.</div>
+              </div>
+
+              <div class="alert alert-light py-2 mb-2">
+                Total calculat: <span class="fw-semibold" id="saleTotal">0.00</span> RON
+              </div>
+
+              <button class="btn btn-success" type="submit">Salvează vânzarea</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card mt-3">
+          <div class="card-header">Raport rapid ({{ report_from }} – {{ report_to }})</div>
+          <div class="card-body">
+            <div class="row g-2">
+              <div class="col-6">
+                <div class="text-muted small">Total vânzări</div>
+                <div class="h5 mb-0">{{ report_total_sales }} RON</div>
+              </div>
+              <div class="col-6">
+                <div class="text-muted small">Total datorii</div>
+                <div class="h5 mb-0">{{ report_total_debts }} RON</div>
+              </div>
+              <div class="col-6 mt-2">
+                <div class="text-muted small">Pui vânduți</div>
+                <div class="h5 mb-0">{{ report_pui_total }}</div>
+              </div>
+              <div class="col-6 mt-2">
+                <div class="text-muted small">Furaj vândut</div>
+                <div class="h5 mb-0">{{ report_furaj }} kg</div>
+              </div>
+            </div>
+
+            {% if top_buyers %}
+              <hr>
+              <div class="text-muted small mb-1">Top cumpărători (după bani)</div>
+              <ol class="mb-0">
+                {% for t in top_buyers %}
+                  <li>{{ t.partner__name|default:"—" }}: {{ t.total }} RON</li>
+                {% endfor %}
+              </ol>
+            {% endif %}
+
+            {% if top_debtors %}
+              <hr>
+              <div class="text-muted small mb-1">Top datornici</div>
+              <ol class="mb-0">
+                {% for t in top_debtors %}
+                  <li>{{ t.document__partner__name|default:"—" }}: {{ t.total }} RON</li>
+                {% endfor %}
+              </ol>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+
+      <div class="col-lg-7">
+        <div class="card mb-3">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Vânzări (ultimele 100)</span>
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:sales_export_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Export CSV</a>
+          </div>
+          <div class="card-body">
+            <form method="get" class="row g-2 align-items-end mb-3">
+              <input type="hidden" name="tab" value="sales" />
+              <div class="col-md-3">
+                <label class="form-label small">De la</label>
+                <input type="date" name="sales_from" class="form-control" value="{% if sales_from %}{{ sales_from }}{% endif %}">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Până la</label>
+                <input type="date" name="sales_to" class="form-control" value="{% if sales_to %}{{ sales_to }}{% endif %}">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Cumpărător</label>
+                <input type="text" name="sales_buyer" class="form-control" placeholder="căutare..." value="{{ sales_buyer }}">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Lot</label>
+                <select name="sales_flock" class="form-select">
+                  <option value="">Toate</option>
+                  {% for f in flocks %}
+                    <option value="{{ f.id }}" {% if sales_flock|add:'' == f.id|add:'' %}selected{% endif %}>{{ f.season.name }} / {{ f.house.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-5">
+                <div class="form-check mt-2">
+                  <input class="form-check-input" type="checkbox" value="1" id="onlyDebts" name="sales_only_debts" {% if sales_only_debts %}checked{% endif %}>
+                  <label class="form-check-label" for="onlyDebts">Doar vânzări cu datorie</label>
+                </div>
+              </div>
+              <div class="col-md-7 text-end">
+                <button class="btn btn-outline-primary" type="submit">Aplică filtre</button>
+                <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=sales">Reset</a>
+              </div>
+            </form>
+
+            {% if sales %}
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead>
+                    <tr>
+                      <th>DATA</th>
+                      <th>ORA</th>
+                      <th>CUMPĂRĂTOR</th>
+                      <th class="text-end">PUI ALBI</th>
+                      <th class="text-end">PUI COLORATI</th>
+                      <th class="text-end">FURAJ(KG)</th>
+                      <th class="text-end">BANI</th>
+                      <th class="text-end">DATORIE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for d in sales %}
+                      <tr>
+                        <td>{{ d.date }}</td>
+                        <td>{% if d.created_at %}{{ d.created_at|date:"H:i" }}{% else %}-{% endif %}</td>
+                        <td>
+                          <div>{{ d.partner.name|default:"—" }}</div>
+                          {% if d.flock_id %}
+                            <div class="text-muted small">{{ d.flock.season.name }} • {{ d.flock.house.name }}</div>
+                          {% endif %}
+                        </td>
+                        <td class="text-end">{{ d.qty_pui_albi }}</td>
+                        <td class="text-end">{{ d.qty_pui_colorati }}</td>
+                        <td class="text-end">{{ d.qty_furaj }}</td>
+                        <td class="text-end">{{ d.total }}</td>
+                        <td class="text-end">
+                          {% if d.datorie and d.datorie|floatformat:2 != "0.00" %}
+                            <span class="badge text-bg-warning">{{ d.datorie }}</span>
+                          {% else %}
+                            <span class="text-muted">0.00</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="text-muted">Nicio vânzare găsită.</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-lg-6">
+            <div class="card">
+              <div class="card-header">Datorii pe cumpărător</div>
+              <div class="card-body">
+                {% if debts_by_buyer %}
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                      <thead>
+                        <tr>
+                          <th>Cumpărător</th>
+                          <th class="text-end">Total datorie</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for row in debts_by_buyer %}
+                          <tr>
+                            <td>
+                              <a href="{% url 'ui:dashboard' %}?tab=sales&sales_buyer={{ row.document__partner__name|urlencode }}&sales_only_debts=1">{{ row.document__partner__name }}</a>
+                            </td>
+                            <td class="text-end fw-semibold">{{ row.total }}</td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="text-muted">Nu există datorii în acest moment.</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-6">
+            <div class="card">
+              <div class="card-header">Plăți scadente</div>
+              <div class="card-body">
+                {% if due_payments %}
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                      <thead>
+                        <tr>
+                          <th>Scadență</th>
+                          <th>Cumpărător</th>
+                          <th class="text-end">Suma</th>
+                          <th class="text-end">Acțiuni</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for p in due_payments %}
+                          <tr>
+                            <td>{{ p.due_date }}</td>
+                            <td>{{ p.document.partner.name }}</td>
+                            <td class="text-end">{{ p.amount }}</td>
+                            <td class="text-end">
+                              <form method="post" action="{% url 'ui:payment_mark_paid' p.id %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="paid_date" value="{{ today }}" />
+                                <select name="method" class="form-select form-select-sm d-inline w-auto">
+                                  <option value="cash">Cash</option>
+                                  <option value="bank">Bancă</option>
+                                  <option value="card">Card</option>
+                                  <option value="other">Altul</option>
+                                </select>
+                                <button class="btn btn-sm btn-outline-success" type="submit">Plătit</button>
+                              </form>
+                            </td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="text-muted">Nu există plăți scadente.</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
   (function(){
+    // 1) Active tab (server setează active_tab în context)
+    const initialTab = "{{ active_tab|escapejs }}" || "flocks";
+    const tabBtn = document.getElementById(initialTab + "-tab");
+    if(tabBtn && window.bootstrap){
+      try { new bootstrap.Tab(tabBtn).show(); } catch(e) {}
+    }
+
+    // 2) Mortalitate: ziua săptămânii + Enter=submit (folosim prefix 'mort')
     function weekdayFromDate(val){
       if(!val) return "—";
       const d = new Date(val + "T00:00:00");
       return d.toLocaleDateString("ro-RO", { weekday: "long" });
     }
-
-    const dateInput = document.querySelector('input[name="date"]');
-    const label = document.getElementById("weekdayLabel");
-    if(dateInput && label){
-      label.textContent = weekdayFromDate(dateInput.value);
-      dateInput.addEventListener("change", function(){ label.textContent = weekdayFromDate(this.value); });
+    const mortDate = document.getElementById("id_mort-date");
+    const mortLabel = document.getElementById("weekdayLabel");
+    if(mortDate && mortLabel){
+      mortLabel.textContent = weekdayFromDate(mortDate.value);
+      mortDate.addEventListener("change", function(){ mortLabel.textContent = weekdayFromDate(this.value); });
     }
-
-    const countInput = document.querySelector('input[name="count"]');
-    if(countInput){
-      countInput.addEventListener("keydown", function(e){
+    const mortCount = document.getElementById("id_mort-count");
+    if(mortCount){
+      mortCount.addEventListener("keydown", function(e){
         if(e.key === "Enter"){
           e.preventDefault();
-          this.form.submit();
+          const f = document.getElementById("mortalityForm");
+          if(f) f.submit();
         }
       });
     }
+
+    // 3) Vânzări: calculează total în timp real (folosim prefix 'sale')
+    const ids = {
+      puiAlbi: "id_sale-pui_albi",
+      pretAlbi: "id_sale-pret_pui_albi",
+      puiCol: "id_sale-pui_colorati",
+      pretCol: "id_sale-pret_pui_colorati",
+      furaj: "id_sale-furaj_kg",
+      pretFuraj: "id_sale-pret_furaj",
+    };
+    const out = document.getElementById("saleTotal");
+
+    function readNum(id){
+      const el = document.getElementById(id);
+      if(!el) return 0;
+      const v = (el.value || "").toString().replace(",", ".");
+      const n = parseFloat(v);
+      return isNaN(n) ? 0 : n;
+    }
+
+    function recalc(){
+      if(!out) return;
+      const puiAlbi = readNum(ids.puiAlbi);
+      const pretAlbi = readNum(ids.pretAlbi);
+      const puiCol = readNum(ids.puiCol);
+      const pretCol = readNum(ids.pretCol);
+      const furaj = readNum(ids.furaj);
+      const pretFuraj = readNum(ids.pretFuraj);
+      const total = (puiAlbi*pretAlbi) + (puiCol*pretCol) + (furaj*pretFuraj);
+      out.textContent = (Math.round(total * 100) / 100).toFixed(2);
+    }
+
+    [ids.puiAlbi, ids.pretAlbi, ids.puiCol, ids.pretCol, ids.furaj, ids.pretFuraj]
+      .map((id) => document.getElementById(id))
+      .filter(Boolean)
+      .forEach((el) => el.addEventListener("input", recalc));
+    recalc();
   })();
 </script>
 {% endblock %}

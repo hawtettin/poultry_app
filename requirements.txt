@@ -1,6 +1,5 @@
 Django==5.1.4
 djangorestframework==3.15.2
-psycopg[binary]
+psycopg2-binary==2.9.9
 dj-database-url==2.3.0
 python-dotenv==1.0.1
-gunicorn==22.0.0

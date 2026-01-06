@@ -5,14 +5,12 @@ from decimal import Decimal
 from django import forms
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
-from django.contrib.auth import get_user_model
-from django.forms import inlineformset_factory
+from django.contrib.auth.forms import AuthenticationForm
 from django.db.models import Q, Sum
 
 from apps.core.models import House, Season, Flock
 from apps.health.models import MortalityEvent
-from apps.finance.models import Document, DocumentLine, Payment, Category, Partner
+from apps.finance.models import Document, DocumentLine, Payment, Partner
 
 
 class BootstrapAuthenticationForm(AuthenticationForm):
@@ -163,61 +161,15 @@ class MortalityEditForm(forms.ModelForm):
                 raise ValidationError(f"Valoare prea mare. În lot mai sunt ~{max(current, 0)} capete (fără această înregistrare).")
         return cleaned
 
-# =============================================================
-# Admin: user provisioning (EMPLOYEE / MANAGER)
-# =============================================================
-
-ROLE_CHOICES = [
-    ("EMPLOYEE", "Angajat"),
-    ("MANAGER", "Manager fermă"),
-]
-
-
-class UserProvisionForm(UserCreationForm):
-    role = forms.ChoiceField(
-        label="Rol",
-        choices=ROLE_CHOICES,
-        initial="EMPLOYEE",
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
-
-    class Meta(UserCreationForm.Meta):
-        model = get_user_model()
-        fields = ("username", "first_name", "last_name", "email", "role", "password1", "password2")
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # bootstrap styling
-        for name, field in self.fields.items():
-            if isinstance(field.widget, forms.Select):
-                field.widget.attrs.setdefault("class", "form-select")
-            else:
-                field.widget.attrs.setdefault("class", "form-control")
-
-    def save(self, commit: bool = True):
-        user = super().save(commit=commit)
-        role = self.cleaned_data.get("role")
-        # assign group (idempotent)
-        from apps.accounts.utils import ensure_group
-
-        grp = ensure_group(role)
-        user.groups.add(grp)
-        return user
-
-
-# =============================================================
-# Sales: edit/create documents of type "sale"
-# =============================================================
-
-
 
 class SaleQuickAddForm(forms.Form):
-    """Înregistrare rapidă vânzare (design clasic).
+    """Quick-add pentru vânzări.
 
-    Creează:
-      - Document (doc_type='sale', status='approved')
-      - 1..3 DocumentLine (Pui albi / Pui colorați / Furaj)
-      - opțional Payment (status='due') dacă există datorie
+    Cerințe:
+    - BANI = valoarea totală a vânzării (calculată automat din cantitate * preț).
+    - DATORIE = opțională (dacă există, se creează un Payment status=due).
+    - Vânzarea se leagă de serie (flock) și implicit de hală.
+    - Validare stoc: nu poți vinde mai mulți pui (albi+colorați) decât sunt disponibili la data respectivă.
     """
 
     date = forms.DateField(
@@ -225,9 +177,8 @@ class SaleQuickAddForm(forms.Form):
         initial=timezone.localdate,
         widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
     )
-
     flock = forms.ModelChoiceField(
-        label="Lot / Serie",
+        label="Lot (serie/hală)",
         queryset=Flock.objects.none(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
@@ -235,11 +186,11 @@ class SaleQuickAddForm(forms.Form):
     buyer_name = forms.CharField(
         label="Cumpărător",
         max_length=200,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "ex: Client SRL"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Nume cumpărător"}),
     )
 
     pui_albi = forms.IntegerField(
-        label="Pui albi (capete)",
+        label="Pui albi (cap)",
         min_value=0,
         initial=0,
         widget=forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
@@ -254,7 +205,7 @@ class SaleQuickAddForm(forms.Form):
     )
 
     pui_colorati = forms.IntegerField(
-        label="Pui colorați (capete)",
+        label="Pui colorați (cap)",
         min_value=0,
         initial=0,
         widget=forms.NumberInput(attrs={"class": "form-control", "inputmode": "numeric"}),
@@ -298,6 +249,7 @@ class SaleQuickAddForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields["flock"].queryset = (
             Flock.objects.select_related("season", "house")
+            .all()
             .order_by("-start_date", "-id")
         )
 
@@ -316,8 +268,8 @@ class SaleQuickAddForm(forms.Form):
         pret_pui_colorati = cleaned.get("pret_pui_colorati") or Decimal("0")
         pret_furaj = cleaned.get("pret_furaj") or Decimal("0")
 
-        datorie = cleaned.get("datorie") or Decimal("0")
-        datorie = datorie.quantize(Decimal("0.01"))
+        datorie = cleaned.get("datorie")
+        datorie = datorie if datorie is not None else Decimal("0")
 
         if not buyer_name:
             raise ValidationError("Completează cumpărătorul.")
@@ -325,6 +277,7 @@ class SaleQuickAddForm(forms.Form):
         if pui_albi <= 0 and pui_colorati <= 0 and furaj_kg <= 0:
             raise ValidationError("Completează cel puțin un câmp: pui albi / pui colorați / furaj.")
 
+        # total vânzare (BANI)
         total = (
             (Decimal(pui_albi) * pret_pui_albi)
             + (Decimal(pui_colorati) * pret_pui_colorati)
@@ -336,19 +289,23 @@ class SaleQuickAddForm(forms.Form):
 
         if datorie < 0:
             raise ValidationError("Datoria nu poate fi negativă.")
+
         if datorie > total:
             raise ValidationError(f"Datoria ({datorie} RON) nu poate depăși totalul ({total} RON).")
 
+        # validare stoc pui la data respectivă
         if flock and date:
             if date < flock.start_date:
                 raise ValidationError("Data vânzării nu poate fi înainte de data populării lotului.")
 
+            # Mortalitate până la data vânzării
             mort = (
                 MortalityEvent.objects.filter(flock=flock, date__lte=date)
                 .aggregate(s=Sum("count"))["s"]
                 or 0
             )
 
+            # Vânzări pui până la data vânzării (albi+colorați)
             sold = (
                 DocumentLine.objects.filter(
                     document__doc_type="sale",
@@ -366,6 +323,7 @@ class SaleQuickAddForm(forms.Form):
 
             available = max(int(flock.initial_count) - int(mort) - int(sold), 0)
             to_sell = pui_albi + pui_colorati
+
             if to_sell > available:
                 raise ValidationError(
                     f"Stoc insuficient: în lot mai sunt ~{available} capete la {date}. "
@@ -378,7 +336,7 @@ class SaleQuickAddForm(forms.Form):
         return cleaned
 
     def save(self, *, user):
-        """Creează Document (sale) + linii + datorie (Payment) dacă există."""
+        """Creează Document (sale) + DocumentLine-uri și, dacă există datorie, Payment status=due."""
         date = self.cleaned_data["date"]
         flock: Flock = self.cleaned_data["flock"]
         buyer_name = self.cleaned_data["buyer_name"]
@@ -433,6 +391,7 @@ class SaleQuickAddForm(forms.Form):
                 unit_price=pret_furaj,
             )
 
+        # recalc (în caz că nu există linii sau pentru siguranță)
         doc.recalc_totals()
         doc.save(update_fields=["subtotal", "total"])
 
@@ -447,66 +406,3 @@ class SaleQuickAddForm(forms.Form):
             )
 
         return doc
-
-
-
-class SaleDocumentForm(forms.ModelForm):
-    class Meta:
-        model = Document
-        fields = [
-            "season",
-            "flock",
-            "partner",
-            "doc_no",
-            "date",
-            "currency",
-            "vat",
-            "status",
-            "notes",
-        ]
-        widgets = {
-            "season": forms.Select(attrs={"class": "form-select"}),
-            "flock": forms.Select(attrs={"class": "form-select"}),
-            "partner": forms.Select(attrs={"class": "form-select"}),
-            "doc_no": forms.TextInput(attrs={"class": "form-control"}),
-            "date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
-            "currency": forms.TextInput(attrs={"class": "form-control"}),
-            "vat": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
-            "status": forms.Select(attrs={"class": "form-select"}),
-            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
-        }
-
-    def clean(self):
-        cleaned = super().clean()
-        # enforce doc_type sale at UI level
-        if self.instance and self.instance.pk:
-            if self.instance.doc_type != "sale":
-                raise ValidationError("Acest formular poate edita doar documente de tip vânzare.")
-        return cleaned
-
-
-class SaleLineForm(forms.ModelForm):
-    class Meta:
-        model = DocumentLine
-        fields = ["category", "description", "qty", "unit", "unit_price"]
-        widgets = {
-            "category": forms.Select(attrs={"class": "form-select"}),
-            "description": forms.TextInput(attrs={"class": "form-control"}),
-            "qty": forms.NumberInput(attrs={"class": "form-control", "step": "0.001"}),
-            "unit": forms.TextInput(attrs={"class": "form-control"}),
-            "unit_price": forms.NumberInput(attrs={"class": "form-control", "step": "0.0001"}),
-        }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # for sales, prefer income categories
-        self.fields["category"].queryset = Category.objects.filter(kind="income").order_by("name")
-
-
-SaleLineFormSet = inlineformset_factory(
-    parent_model=Document,
-    model=DocumentLine,
-    form=SaleLineForm,
-    extra=1,
-    can_delete=True,
-)

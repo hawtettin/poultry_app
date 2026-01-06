@@ -82,19 +82,6 @@ class DocumentViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentSerializer
     permission_classes = [IsEmployeeOrAbove]
 
-    def get_permissions(self):
-        """Restrict editing/deleting SALES to MANAGER/ADMIN.
-
-        Employees can still view sales and work with other docs as permitted.
-        """
-        if self.action in ("update", "partial_update", "destroy"):
-            pk = self.kwargs.get("pk")
-            if pk is not None:
-                doc_type = Document.objects.filter(pk=pk).values_list("doc_type", flat=True).first()
-                if doc_type == "sale":
-                    return [IsManagerOrAdmin()]
-        return [IsEmployeeOrAbove()]
-
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
