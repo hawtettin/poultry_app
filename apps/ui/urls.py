@@ -12,6 +12,13 @@ urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("series/new/", views.create_series, name="create_series"),
 
+    # Utilizatori (doar ADMIN)
+    path("users/", views.users_list, name="users_list"),
+    path("users/new/", views.user_create, name="user_create"),
+
+    # Accesări (LOGIN/LOGOUT)
+    path("access/", views.access_history, name="access_history"),
+
     path("mortality/<int:pk>/edit/", views.mortality_edit, name="mortality_edit"),
     path("mortality/<int:pk>/delete/", views.mortality_delete, name="mortality_delete"),
 
@@ -25,5 +32,6 @@ urlpatterns = [
         template_name="ui/login.html",
         authentication_form=BootstrapAuthenticationForm,
     ), name="login"),
-    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    # Logout: redirect imediat către login (și merge atât cu GET, cât și cu POST)
+    path("logout/", auth_views.LogoutView.as_view(next_page="/login/"), name="logout"),
 ]

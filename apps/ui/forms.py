@@ -6,11 +6,19 @@ from django import forms
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.models import Group, User
 from django.db.models import Q, Sum
 
 from apps.core.models import House, Season, Flock
 from apps.health.models import MortalityEvent
 from apps.finance.models import Document, DocumentLine, Payment, Partner
+
+
+ROLE_CHOICES = [
+    ("EMPLOYEE", "Angajat"),
+    ("MANAGER", "Manager fermă"),
+]
 
 
 class BootstrapAuthenticationForm(AuthenticationForm):
@@ -19,6 +27,50 @@ class BootstrapAuthenticationForm(AuthenticationForm):
         for f in self.fields.values():
             f.widget.attrs.setdefault("class", "form-control")
             f.widget.attrs.setdefault("autocomplete", "off")
+
+
+class StaffUserCreateForm(UserCreationForm):
+    """Formular pentru creare conturi (EMPLOYEE / MANAGER).
+
+    Folosit în UI (nu în Django Admin).
+    """
+
+    role = forms.ChoiceField(
+        label="Rol",
+        choices=ROLE_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ("username", "first_name", "last_name", "email")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Bootstrap styles
+        for name, f in self.fields.items():
+            # role are deja form-select
+            if name == "role":
+                continue
+            f.widget.attrs.setdefault("class", "form-control")
+            f.widget.attrs.setdefault("autocomplete", "off")
+
+        # Email optional (implicit este blank=True în User)
+        self.fields["email"].required = False
+
+    def save(self, commit: bool = True):
+        # UserCreationForm face set_password; folosim commit=False ca să putem seta grupul după save.
+        user = super().save(commit=False)
+        if commit:
+            user.save()
+
+        role = (self.cleaned_data.get("role") or "").strip() or "EMPLOYEE"
+        if commit:
+            group, _ = Group.objects.get_or_create(name=role)
+            user.groups.add(group)
+
+        return user
 
 
 class CreateSeriesForm(forms.Form):

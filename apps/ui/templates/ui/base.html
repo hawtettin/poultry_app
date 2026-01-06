@@ -1,3 +1,4 @@
+{% load ui_extras %}
 <!doctype html>
 <html lang="ro">
   <head>
@@ -17,14 +18,23 @@
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}">Dashboard</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:dashboard' %}?tab=sales">Vânzări</a></li>
-            <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'ui:history' %}">Istoric</a></li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:access_history' %}">Accesări</a></li>
+            {% if user.is_superuser or user|in_groups:"ADMIN" %}
+              <li class="nav-item"><a class="nav-link" href="{% url 'ui:users_list' %}">Utilizatori</a></li>
+            {% endif %}
+            <li class="nav-item"><a class="nav-link" href="{% url 'ui:create_series' %}">Serie nouă</a></li>
             <li class="nav-item"><a class="nav-link" href="/admin/">Admin</a></li>
           </ul>
           <ul class="navbar-nav ms-auto">
             {% if user.is_authenticated %}
               <li class="nav-item"><span class="navbar-text me-2">Salut, {{ user.username }}</span></li>
-              <li class="nav-item"><a class="nav-link" href="{% url 'ui:logout' %}">Logout</a></li>
+              <li class="nav-item">
+                <form method="post" action="{% url 'ui:logout' %}" class="d-inline">
+                  {% csrf_token %}
+                  <button class="btn btn-link nav-link p-0" type="submit">Logout</button>
+                </form>
+              </li>
             {% else %}
               <li class="nav-item"><a class="nav-link" href="{% url 'ui:login' %}">Login</a></li>
             {% endif %}

@@ -4,7 +4,9 @@ import csv
 from decimal import Decimal
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse
@@ -19,7 +21,13 @@ from apps.auditlog.utils import log_event, snapshot
 from apps.auditlog.models import AuditEvent
 from apps.finance.models import Document, DocumentLine, Payment
 
-from .forms import CreateSeriesForm, MortalityQuickAddForm, MortalityEditForm, SaleQuickAddForm
+from .forms import (
+    CreateSeriesForm,
+    MortalityQuickAddForm,
+    MortalityEditForm,
+    SaleQuickAddForm,
+    StaffUserCreateForm,
+)
 
 
 WEEKDAYS_RO = ["luni", "marți", "miercuri", "joi", "vineri", "sâmbătă", "duminică"]
@@ -30,6 +38,15 @@ def is_manager(user) -> bool:
     if user.is_superuser:
         return True
     return user.groups.filter(name__in=["ADMIN", "MANAGER"]).exists()
+
+
+def is_admin(user) -> bool:
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.groups.filter(name="ADMIN").exists()
+
 
 def can_modify_mortality(user, m: MortalityEvent) -> bool:
     if not user.is_authenticated:
@@ -310,6 +327,80 @@ def create_series(request):
 
 
 @login_required
+def users_list(request):
+    """Listă utilizatori (angajați + manageri).
+
+    Doar ADMIN (sau superuser) poate vedea această pagină.
+    """
+
+    if not is_admin(request.user):
+        messages.error(request, "Nu ai permisiuni să vezi lista de utilizatori.")
+        return redirect("ui:dashboard")
+
+    User = get_user_model()
+
+    qs = (
+        User.objects.filter(groups__name__in=["EMPLOYEE", "MANAGER"])
+        .distinct()
+        .order_by("username")
+    )
+    users = list(qs)
+
+    # adăugăm un label simplu pentru rol (pentru tabel)
+    for u in users:
+        if getattr(u, "is_superuser", False):
+            u.role_label = "Admin"
+        elif u.groups.filter(name="MANAGER").exists():
+            u.role_label = "Manager fermă"
+        elif u.groups.filter(name="EMPLOYEE").exists():
+            u.role_label = "Angajat"
+        else:
+            u.role_label = "-"
+
+    return render(request, "ui/users_list.html", {"employees": users, "is_manager": is_manager(request.user)})
+
+
+@login_required
+def user_create(request):
+    """Creează cont pentru EMPLOYEE sau MANAGER.
+
+    Doar ADMIN (sau superuser) poate crea conturi.
+    """
+
+    if not is_admin(request.user):
+        messages.error(request, "Doar ADMIN poate crea conturi.")
+        return redirect("ui:dashboard")
+
+    if request.method == "POST":
+        form = StaffUserCreateForm(request.POST)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    u = form.save(commit=True)
+            except IntegrityError:
+                form.add_error("username", "Acest username există deja. Alege altul (ex: vasile1).")
+                messages.error(request, "Username duplicat.")
+                return render(request, "ui/user_create.html", {"form": form})
+
+            log_event(
+                actor=request.user,
+                action="CREATE",
+                instance=u,
+                message=f"CREATE utilizator: {u.username}",
+                after=snapshot(u),
+                request=request,
+            )
+            messages.success(request, f"Utilizator creat: {u.username}")
+            return redirect("ui:users_list")
+
+        messages.error(request, "Nu am putut crea utilizatorul. Verifică formularul.")
+    else:
+        form = StaffUserCreateForm()
+
+    return render(request, "ui/user_create.html", {"form": form})
+
+
+@login_required
 def mortality_edit(request, pk: int):
     m = get_object_or_404(MortalityEvent.objects.select_related("flock", "created_by"), pk=pk)
     if not can_modify_mortality(request.user, m):
@@ -374,13 +465,93 @@ def mortality_delete(request, pk: int):
 
 @login_required
 def history(request):
-    # employee vede doar istoricul lui; manager/admin vede tot
+    """Istoric schimbări (audit CRUD).
+
+    - EMPLOYEE: vede doar istoricul lui
+    - MANAGER/ADMIN: vede tot + poate filtra după utilizator și zi
+    """
+
+    mgr = is_manager(request.user)
+    User = get_user_model()
+
+    selected_user = (request.GET.get("user") or "").strip()
+    day = parse_date((request.GET.get("day") or "").strip())
+
     qs = AuditEvent.objects.select_related("actor").all()
-    if not is_manager(request.user):
+
+    if not mgr:
         qs = qs.filter(actor=request.user)
+    else:
+        if selected_user.isdigit():
+            qs = qs.filter(actor_id=int(selected_user))
+        if day:
+            qs = qs.filter(created_at__date=day)
 
     qs = qs.order_by("-created_at", "-id")[:300]
-    return render(request, "ui/history.html", {"events": qs, "is_manager": is_manager(request.user)})
+
+    employees = []
+    if mgr:
+        employees = (
+            User.objects.filter(groups__name__in=["EMPLOYEE", "MANAGER"])
+            .distinct()
+            .order_by("username")
+        )
+
+    return render(
+        request,
+        "ui/history.html",
+        {
+            "events": qs,
+            "is_manager": mgr,
+            "employees": employees,
+            "selected_user": selected_user,
+            "selected_day": (day.isoformat() if day else ""),
+        },
+    )
+
+
+@login_required
+def access_history(request):
+    """Istoric accesări (LOGIN/LOGOUT)."""
+
+    from apps.auditlog.models import AccessLog
+
+    mgr = is_manager(request.user)
+    User = get_user_model()
+
+    selected_user = (request.GET.get("user") or "").strip()
+    day = parse_date((request.GET.get("day") or "").strip())
+
+    qs = AccessLog.objects.select_related("actor").all()
+    if not mgr:
+        qs = qs.filter(actor=request.user)
+    else:
+        if selected_user.isdigit():
+            qs = qs.filter(actor_id=int(selected_user))
+        if day:
+            qs = qs.filter(created_at__date=day)
+
+    qs = qs.order_by("-created_at", "-id")[:400]
+
+    employees = []
+    if mgr:
+        employees = (
+            User.objects.filter(groups__name__in=["EMPLOYEE", "MANAGER"])
+            .distinct()
+            .order_by("username")
+        )
+
+    return render(
+        request,
+        "ui/access.html",
+        {
+            "events": qs,
+            "is_manager": mgr,
+            "employees": employees,
+            "selected_user": selected_user,
+            "selected_day": (day.isoformat() if day else ""),
+        },
+    )
 
 
 @login_required

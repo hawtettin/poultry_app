@@ -1,8 +1,8 @@
 {% extends "ui/base.html" %}
-{% block title %}Creează angajat{% endblock %}
+{% block title %}Creează utilizator{% endblock %}
 
 {% block content %}
-<h2 class="mb-3">Creează cont de angajat</h2>
+<h2 class="mb-3">Creează cont (Angajat / Manager fermă)</h2>
 
 <div class="card">
   <div class="card-body">
@@ -33,7 +33,11 @@
           {{ form.email.errors }}
         </div>
 
-        <div class="col-md-6"></div>
+        <div class="col-md-6">
+          <label class="form-label">Rol</label>
+          {{ form.role }}
+          {{ form.role.errors }}
+        </div>
 
         <div class="col-md-6">
           <label class="form-label">Parolă</label>
@@ -53,7 +57,7 @@
       </div>
 
       <div class="text-muted small mt-3">
-        Contul creat intră automat în grupul <code>EMPLOYEE</code>.
+        Contul creat intră automat în grupul ales: <code>EMPLOYEE</code> sau <code>MANAGER</code>.
       </div>
     </form>
   </div>
