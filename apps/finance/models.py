@@ -88,6 +88,7 @@ class Payment(models.Model):
     method = models.CharField(max_length=10, choices=METHODS, default="bank")
     status = models.CharField(max_length=10, choices=STATUS, default="due")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    # Folosit pentru permisiuni (employee poate modifica doar plăți create de el în ziua curentă)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -7,13 +7,14 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, Count
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.core.models import Flock
 from apps.health.models import MortalityEvent
@@ -26,8 +27,8 @@ from .forms import (
     MortalityQuickAddForm,
     MortalityEditForm,
     SaleQuickAddForm,
-    PaymentEditForm,
     StaffUserCreateForm,
+    PaymentEditForm,
 )
 
 
@@ -59,21 +60,48 @@ def can_modify_mortality(user, m: MortalityEvent) -> bool:
 
 
 def can_modify_payment(user, p: Payment) -> bool:
-    """Admin/Manager: orice.
-    Employee: doar plățile lui + doar în ziua curentă.
+    """Permisiuni UI pentru edit/ștergere/mark-paid la Payment.
+
+    - ADMIN/MANAGER/superuser: orice plată.
+    - EMPLOYEE: doar plățile create de el și doar în ziua curentă (după created_at).
     """
-    if not user.is_authenticated:
+
+    if not getattr(user, "is_authenticated", False):
         return False
-    if user.is_superuser or is_manager(user):
+
+    if is_manager(user):
         return True
+
+    # EMPLOYEE: doar ale lui
     if not user.groups.filter(name="EMPLOYEE").exists():
         return False
-    if p.created_by_id != user.id:
+
+    if getattr(p, "created_by_id", None) != user.id:
         return False
-    if not getattr(p, "created_at", None):
+
+    created_at = getattr(p, "created_at", None)
+    if not created_at:
         return False
-    today = timezone.localdate()
-    return timezone.localtime(p.created_at).date() == today
+
+    try:
+        created_day = timezone.localtime(created_at).date()
+    except Exception:
+        # dacă USE_TZ=False (datetime naive)
+        created_day = created_at.date()
+    return created_day == timezone.localdate()
+
+
+def safe_next_url(request, default: str) -> str:
+    """Returnează un next URL safe (doar intern), altfel default."""
+
+    nxt = (request.POST.get("next") or request.GET.get("next") or "").strip()
+    if nxt and url_has_allowed_host_and_scheme(
+        url=nxt,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return nxt
+    return default
 
 
 @login_required
@@ -218,7 +246,7 @@ def dashboard(request):
         .order_by("-total")[:30]
     )
 
-    due_payments = (
+    due_payments_qs = (
         Payment.objects.filter(status="due", document__doc_type="sale")
         .select_related(
             "document",
@@ -226,11 +254,11 @@ def dashboard(request):
             "document__flock",
             "document__flock__season",
             "document__flock__house",
+            "created_by",
         )
         .order_by("due_date", "id")[:80]
     )
-
-    # Flags pentru template (Edit/Șterge)
+    due_payments = list(due_payments_qs)
     for p in due_payments:
         p.can_modify = can_modify_payment(request.user, p)
 
@@ -578,6 +606,193 @@ def access_history(request):
 
 
 @login_required
+def payment_ledger(request):
+    """Ledger (registru) plăți.
+
+    Vizibilitate:
+    - ADMIN/MANAGER: toate plățile
+    - EMPLOYEE: doar plățile create de el
+
+    Acțiuni (edit/delete):
+    - ADMIN/MANAGER: orice plată
+    - EMPLOYEE: doar plățile lui, doar în ziua curentă (după created_at)
+
+    Filtre (GET):
+      - status: all|due|paid
+      - due_from / due_to (YYYY-MM-DD)  (după due_date)
+      - paid_from / paid_to (YYYY-MM-DD) (după paid_date)
+      - buyer (string)  (document.partner.name)
+      - user (id) (doar manager/admin)
+    """
+
+    mgr = is_manager(request.user)
+    User = get_user_model()
+
+    status = (request.GET.get("status") or "all").strip() or "all"
+    due_from = parse_date((request.GET.get("due_from") or "").strip())
+    due_to = parse_date((request.GET.get("due_to") or "").strip())
+    paid_from = parse_date((request.GET.get("paid_from") or "").strip())
+    paid_to = parse_date((request.GET.get("paid_to") or "").strip())
+    buyer = (request.GET.get("buyer") or "").strip()
+    selected_user = (request.GET.get("user") or "").strip()
+
+    qs = (
+        Payment.objects.select_related("document", "document__partner", "created_by")
+        .all()
+    )
+
+    if not mgr:
+        qs = qs.filter(created_by=request.user)
+    else:
+        if selected_user.isdigit():
+            qs = qs.filter(created_by_id=int(selected_user))
+
+    if status in ("due", "paid"):
+        qs = qs.filter(status=status)
+
+    if due_from:
+        qs = qs.filter(due_date__gte=due_from)
+    if due_to:
+        qs = qs.filter(due_date__lte=due_to)
+
+    if paid_from:
+        qs = qs.filter(paid_date__gte=paid_from)
+    if paid_to:
+        qs = qs.filter(paid_date__lte=paid_to)
+
+    if buyer:
+        qs = qs.filter(document__partner__name__icontains=buyer)
+
+    qs = qs.order_by("-due_date", "-id")
+
+    # Totals pentru filtrul curent
+    totals = qs.aggregate(
+        total=Coalesce(Sum("amount"), Decimal("0.00")),
+        total_due=Coalesce(Sum("amount", filter=Q(status="due")), Decimal("0.00")),
+        total_paid=Coalesce(Sum("amount", filter=Q(status="paid")), Decimal("0.00")),
+    )
+
+    payments = list(qs[:600])
+    for p in payments:
+        p.can_modify = can_modify_payment(request.user, p)
+        # label simplu pentru tabel
+        if p.created_by_id:
+            p.created_by_label = getattr(p.created_by, "username", "") or ""
+        else:
+            p.created_by_label = "-"
+
+    employees = []
+    if mgr:
+        employees = (
+            User.objects.filter(groups__name__in=["EMPLOYEE", "MANAGER"]).distinct().order_by("username")
+        )
+
+    return render(
+        request,
+        "ui/payment_ledger.html",
+        {
+            "payments": payments,
+            "is_manager": mgr,
+            "employees": employees,
+            "status": status,
+            "due_from": (due_from.isoformat() if due_from else ""),
+            "due_to": (due_to.isoformat() if due_to else ""),
+            "paid_from": (paid_from.isoformat() if paid_from else ""),
+            "paid_to": (paid_to.isoformat() if paid_to else ""),
+            "buyer": buyer,
+            "selected_user": selected_user,
+            "totals": totals,
+            "today": timezone.localdate().isoformat(),
+        },
+    )
+
+
+@login_required
+def payment_edit(request, pk: int):
+    p = get_object_or_404(
+        Payment.objects.select_related("document", "document__partner", "created_by"),
+        pk=pk,
+    )
+
+    if not can_modify_payment(request.user, p):
+        messages.error(request, "Nu ai drepturi să editezi această plată.")
+        return redirect("ui:payment_ledger")
+
+    before = snapshot(p)
+
+    next_url = (request.GET.get("next") or "").strip() or reverse("ui:payment_ledger")
+
+    if request.method == "POST":
+        form = PaymentEditForm(request.POST, instance=p)
+        if form.is_valid():
+            p2 = form.save()
+
+            log_event(
+                actor=request.user,
+                action="UPDATE",
+                instance=p2,
+                message=f"UPDATE payment: #{p2.id} ({p2.amount} {p2.document.currency}) status={p2.status}",
+                before=before,
+                after=snapshot(p2),
+                request=request,
+            )
+            messages.success(request, "Plata a fost actualizată.")
+            return redirect(next_url)
+
+        messages.error(request, "Nu am putut salva plata. Verifică datele.")
+    else:
+        form = PaymentEditForm(instance=p)
+
+    return render(
+        request,
+        "ui/payment_edit.html",
+        {
+            "form": form,
+            "p": p,
+            "next_url": next_url,
+        },
+    )
+
+
+@login_required
+def payment_delete(request, pk: int):
+    p = get_object_or_404(
+        Payment.objects.select_related("document", "document__partner", "created_by"),
+        pk=pk,
+    )
+
+    if not can_modify_payment(request.user, p):
+        messages.error(request, "Nu ai drepturi să ștergi această plată.")
+        return redirect("ui:payment_ledger")
+
+    next_url = (request.GET.get("next") or "").strip() or reverse("ui:payment_ledger")
+
+    if request.method == "POST":
+        before = snapshot(p)
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=p,
+            message=f"DELETE payment: #{p.id} ({p.amount} {p.document.currency}) status={p.status}",
+            before=before,
+            after=None,
+            request=request,
+        )
+        p.delete()
+        messages.success(request, "Plata a fost ștearsă.")
+        return redirect(next_url)
+
+    return render(
+        request,
+        "ui/payment_confirm_delete.html",
+        {
+            "p": p,
+            "next_url": next_url,
+        },
+    )
+
+
+@login_required
 def sales_export_csv(request):
     """Export CSV pentru vânzări.
 
@@ -661,19 +876,22 @@ def sales_export_csv(request):
 def payment_mark_paid(request, pk: int):
     """Marchează o datorie (Payment status=due) ca fiind plătită."""
     p = get_object_or_404(
-        Payment.objects.select_related("document", "document__partner"),
+        Payment.objects.select_related("document", "document__partner", "created_by"),
         pk=pk,
     )
 
+    next_url = (request.GET.get("next") or "").strip() or f"{reverse('ui:dashboard')}?tab=sales"
+
     if not can_modify_payment(request.user, p):
         messages.error(request, "Nu ai drepturi să modifici această plată.")
-        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+        return redirect(next_url)
 
     if p.status != "due":
         messages.info(request, "Această înregistrare nu mai este scadentă.")
-        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+        return redirect(next_url)
 
     if request.method == "POST":
+        before = snapshot(p)
         paid_date = parse_date((request.POST.get("paid_date") or "").strip()) or timezone.localdate()
         method = (request.POST.get("method") or "cash").strip() or "cash"
         p.status = "paid"
@@ -686,78 +904,12 @@ def payment_mark_paid(request, pk: int):
             action="UPDATE",
             instance=p,
             message=f"PAYMENT paid: #{p.id} ({p.amount} {p.document.currency})",
-            before=None,
+            before=before,
             after=snapshot(p),
             request=request,
         )
         messages.success(request, "Datoria a fost marcată ca plătită.")
-        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
+        return redirect(next_url)
 
     # fallback GET
-    return redirect(f"{reverse('ui:dashboard')}?tab=sales")
-
-
-@login_required
-def payment_edit(request, pk: int):
-    p = get_object_or_404(
-        Payment.objects.select_related("document", "document__partner"),
-        pk=pk,
-    )
-    if not can_modify_payment(request.user, p):
-        messages.error(request, "Nu ai drepturi să editezi această plată.")
-        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
-
-    if request.method == "POST":
-        form = PaymentEditForm(request.POST, instance=p)
-        if form.is_valid():
-            before = snapshot(p)
-            form.save()
-            log_event(
-                actor=request.user,
-                action="UPDATE",
-                instance=p,
-                message=f"UPDATE payment: #{p.id} ({p.amount} {p.document.currency})",
-                before=before,
-                after=snapshot(p),
-                request=request,
-            )
-            messages.success(request, "Plata a fost actualizată.")
-            return redirect(f"{reverse('ui:dashboard')}?tab=sales")
-        messages.error(request, "Nu am putut salva. Verifică datele.")
-    else:
-        form = PaymentEditForm(instance=p)
-
-    return render(request, "ui/payment_edit.html", {"payment": p, "form": form})
-
-
-@login_required
-def payment_delete(request, pk: int):
-    p = get_object_or_404(
-        Payment.objects.select_related("document", "document__partner"),
-        pk=pk,
-    )
-    if not can_modify_payment(request.user, p):
-        messages.error(request, "Nu ai drepturi să ștergi această plată.")
-        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
-
-    if request.method == "POST":
-        before = snapshot(p)
-        pid = p.id
-        amount = p.amount
-        currency = p.document.currency
-        p.delete()
-        log_event(
-            actor=request.user,
-            action="DELETE",
-            instance=None,
-            message=f"DELETE payment: #{pid} ({amount} {currency})",
-            before=before,
-            after=None,
-            request=request,
-        )
-        messages.success(request, "Plata a fost ștearsă.")
-        return redirect(f"{reverse('ui:dashboard')}?tab=sales")
-
-    return render(request, "ui/payment_confirm_delete.html", {"payment": p})
-
-
+    return redirect(next_url)

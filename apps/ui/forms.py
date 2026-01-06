@@ -461,7 +461,10 @@ class SaleQuickAddForm(forms.Form):
 
 
 class PaymentEditForm(forms.ModelForm):
-    """Editare plată (doar pentru cei care au voie să modifice)."""
+    """Editare plată (datorie / plată efectuată).
+
+    Notă: permisiunile sunt aplicate în view (ADMIN/MANAGER orice, EMPLOYEE doar azi + doar ale lui).
+    """
 
     class Meta:
         model = Payment
@@ -469,15 +472,26 @@ class PaymentEditForm(forms.ModelForm):
         widgets = {
             "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "paid_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
-            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
             "method": forms.Select(attrs={"class": "form-select"}),
             "status": forms.Select(attrs={"class": "form-select"}),
         }
 
     def clean(self):
         cleaned = super().clean()
-        status = cleaned.get("status")
+        status = (cleaned.get("status") or "").strip() or "due"
         paid_date = cleaned.get("paid_date")
+
+        # Dacă marcăm ca "paid" și nu există paid_date -> folosim azi.
         if status == "paid" and not paid_date:
-            raise ValidationError("Dacă status = Plătit, completează și data plății.")
+            cleaned["paid_date"] = timezone.localdate()
+
+        # Dacă marcăm ca "due" -> paid_date trebuie gol.
+        if status == "due":
+            cleaned["paid_date"] = None
+
+        amount = cleaned.get("amount")
+        if amount is not None and amount <= 0:
+            raise ValidationError("Suma trebuie să fie pozitivă.")
+
         return cleaned

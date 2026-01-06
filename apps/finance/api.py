@@ -109,5 +109,15 @@ class PaymentViewSet(viewsets.ModelViewSet):
     serializer_class = PaymentSerializer
     permission_classes = [CanManagePayments]
 
+    def get_queryset(self):
+        qs = super().get_queryset().select_related("document", "document__partner", "created_by")
+        u = self.request.user
+        if not u.is_authenticated:
+            return qs.none()
+        if u.is_superuser or u.groups.filter(name__in=["ADMIN", "MANAGER"]).exists():
+            return qs
+        # EMPLOYEE: doar plățile lui
+        return qs.filter(created_by=u)
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
