@@ -2,30 +2,20 @@
 {% block title %}Șterge plată{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <div>
-    <h3 class="mb-0">Șterge plată #{{ p.id }}</h3>
-    <div class="text-muted small">
-      {% if p.document and p.document.partner %}
-        Cumpărător: <strong>{{ p.document.partner.name }}</strong>
-      {% endif %}
-      <span class="ms-2">Doc #{{ p.document.id }} • {{ p.document.date }}</span>
-      <span class="ms-2">Sumă: <strong>{{ p.amount }}</strong> {{ p.document.currency }}</span>
-    </div>
-  </div>
-  <div class="text-end">
-    <a class="btn btn-sm btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
-  </div>
-</div>
+<h2 class="mb-3">Șterge plată #{{ payment.id }}</h2>
 
 <div class="alert alert-warning">
-  Ești sigur că vrei să ștergi această plată? Acțiunea este <strong>ireversibilă</strong>.
+  Sigur vrei să ștergi această plată?
+  <div class="mt-2">
+    Cumpărător: <strong>{{ payment.document.partner.name|default:"—" }}</strong><br/>
+    Suma: <strong>{{ payment.amount }}</strong> {{ payment.document.currency }}<br/>
+    Scadență: {{ payment.due_date }}
+  </div>
 </div>
 
 <form method="post">
   {% csrf_token %}
-  <input type="hidden" name="next" value="{{ next_url }}" />
   <button class="btn btn-danger" type="submit">Da, șterge</button>
-  <a class="btn btn-outline-secondary" href="{{ next_url }}">Anulează</a>
+  <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=sales">Renunță</a>
 </form>
 {% endblock %}
