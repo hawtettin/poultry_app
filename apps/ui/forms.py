@@ -10,6 +10,40 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import Group, User
 from django.db.models import Q, Sum
 
+# Django's built-in ClearableFileInput raises ValueError when using the
+# "multiple" attribute unless the widget explicitly allows multiple selection.
+# We need this to support attaching multiple files (factură + chitanță/OP etc.).
+
+
+class MultipleClearableFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
+class MultipleFileField(forms.FileField):
+    """A FileField that accepts multiple uploaded files."""
+
+    def to_python(self, data):
+        if not data:
+            return []
+        if isinstance(data, (list, tuple)):
+            return list(data)
+        return [data]
+
+    def validate(self, data):
+        # data is a list
+        if self.required and not data:
+            raise ValidationError(self.error_messages["required"], code="required")
+
+    def run_validators(self, data):
+        for f in data:
+            super().run_validators(f)
+
+    def clean(self, data, initial=None):
+        data = self.to_python(data)
+        self.validate(data)
+        self.run_validators(data)
+        return data
+
 from apps.core.models import House, Season, Flock
 from apps.health.models import MortalityEvent
 from apps.finance.models import Document, DocumentLine, Payment, Partner
@@ -791,10 +825,10 @@ class ExpenseDocumentForm(forms.Form):
         widget=forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "detalii utile"}),
     )
 
-    attachments = forms.FileField(
+    attachments = MultipleFileField(
         label="Atașamente (factură, chitanță, OP)",
         required=False,
-        widget=forms.ClearableFileInput(attrs={"class": "form-control", "multiple": True}),
+        widget=MultipleClearableFileInput(attrs={"class": "form-control", "multiple": True}),
     )
 
     def __init__(self, *args, **kwargs):
