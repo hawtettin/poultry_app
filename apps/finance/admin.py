@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Partner, Category, Document, DocumentLine, Payment
+from .models import Partner, Category, Document, DocumentLine, Payment, ExpenseAttachment
 
 @admin.register(Partner)
 class PartnerAdmin(admin.ModelAdmin):
@@ -18,7 +18,7 @@ class DocumentLineInline(admin.TabularInline):
 
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
-    list_display = ("id", "doc_type", "status", "doc_no", "date", "season", "flock", "partner", "total", "currency")
+    list_display = ("id", "doc_type", "status", "doc_no", "date", "season", "flock", "partner", "vat_rate", "total", "currency")
     list_filter = ("doc_type", "status", "season")
     inlines = [DocumentLineInline]
 
@@ -26,3 +26,9 @@ class DocumentAdmin(admin.ModelAdmin):
 class PaymentAdmin(admin.ModelAdmin):
     list_display = ("id", "document", "status", "due_date", "paid_date", "amount", "method")
     list_filter = ("status", "method")
+
+
+@admin.register(ExpenseAttachment)
+class ExpenseAttachmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "document", "original_name", "uploaded_at", "uploaded_by")
+    search_fields = ("original_name", "document__doc_no", "document__partner__name")

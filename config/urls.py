@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from django.contrib import admin
 from django.urls import include, path
+
+from django.conf import settings
+from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
 
 from apps.core.api import HouseViewSet, SeasonViewSet, FlockViewSet
@@ -30,3 +33,8 @@ urlpatterns = [
     path("api/reports/season/<int:season_id>/", SeasonReportView.as_view(), name="season-report"),
     path("api/auth/", include("rest_framework.urls")),
 ]
+
+
+# Servește fișierele media (atașamente) în mod DEV.
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

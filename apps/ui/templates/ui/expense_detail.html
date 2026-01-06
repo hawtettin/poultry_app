@@ -1,0 +1,136 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Cheltuială #{{ d.id }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">Cheltuială #{{ d.id }}</h2>
+    <div class="text-muted">{{ d.date }} • {{ d.partner.name|default:"—" }} • {{ d.pay_status_label }}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=expenses">Înapoi</a>
+    {% if d.can_modify %}
+      <a class="btn btn-outline-primary" href="{% url 'ui:expense_edit' d.id %}?next={{ request.get_full_path|urlencode }}">Editează</a>
+      <a class="btn btn-outline-danger" href="{% url 'ui:expense_delete' d.id %}?next={{ request.get_full_path|urlencode }}">Șterge</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card mb-3">
+      <div class="card-header">Document</div>
+      <div class="card-body">
+        <div><span class="text-muted">Serie:</span> {{ d.season.name }}</div>
+        <div><span class="text-muted">Nr document:</span> {{ d.doc_no|default:"—" }}</div>
+        <div><span class="text-muted">TVA:</span> {{ d.vat_rate }}% ({{ d.vat }} RON)</div>
+        <div class="mt-2">
+          <div><span class="text-muted">Subtotal:</span> {{ d.subtotal }} RON</div>
+          <div><span class="text-muted">Total:</span> <span class="fw-semibold">{{ d.total }} RON</span></div>
+        </div>
+        {% if d.notes %}
+          <hr>
+          <div class="text-muted small">Note</div>
+          <div>{{ d.notes }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Plăți</div>
+      <div class="card-body">
+        {% if d.payments.all %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Scadență</th>
+                  <th>Plătit la</th>
+                  <th class="text-end">Suma</th>
+                  <th>Metoda</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in d.payments.all %}
+                  <tr>
+                    <td>
+                      {% if p.status == "paid" %}
+                        <span class="badge text-bg-success">Plătit</span>
+                      {% else %}
+                        <span class="badge text-bg-warning">Neplătit</span>
+                      {% endif %}
+                    </td>
+                    <td>{{ p.due_date }}</td>
+                    <td>{% if p.paid_date %}{{ p.paid_date }}{% else %}—{% endif %}</td>
+                    <td class="text-end">{{ p.amount }}</td>
+                    <td>{% if p.method == "bank" %}OP{% else %}{{ p.method }}{% endif %}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">Nu există plăți.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-header">Linii</div>
+      <div class="card-body">
+        {% if d.lines.all %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Hală</th>
+                  <th>Lot</th>
+                  <th>Denumire</th>
+                  <th class="text-end">Cant.</th>
+                  <th>UM</th>
+                  <th class="text-end">Preț unitar</th>
+                  <th class="text-end">Total linie</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for l in d.lines.all %}
+                  <tr>
+                    <td>{{ l.house.name|default:"—" }}</td>
+                    <td>{% if l.flock %}{{ l.flock.season.name }} • {{ l.flock.house.name }}{% else %}—{% endif %}</td>
+                    <td>{{ l.description }}</td>
+                    <td class="text-end">{{ l.qty }}</td>
+                    <td>{{ l.unit }}</td>
+                    <td class="text-end">{{ l.unit_price }}</td>
+                    <td class="text-end">{{ l.line_total }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">Nu există linii.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Atașamente</div>
+      <div class="card-body">
+        {% if d.attachments.all %}
+          <ul class="mb-0">
+            {% for a in d.attachments.all %}
+              <li><a href="{{ a.file.url }}" target="_blank">{{ a.original_name|default:"fișier" }}</a></li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">Nu există atașamente.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

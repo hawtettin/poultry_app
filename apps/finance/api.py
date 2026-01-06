@@ -20,7 +20,17 @@ class CategorySerializer(serializers.ModelSerializer):
 class DocumentLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentLine
-        fields = ["id", "category", "description", "qty", "unit", "unit_price", "line_total"]
+        fields = [
+            "id",
+            "house",
+            "flock",
+            "category",
+            "description",
+            "qty",
+            "unit",
+            "unit_price",
+            "line_total",
+        ]
         read_only_fields = ["line_total"]
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -32,12 +42,13 @@ class DocumentSerializer(serializers.ModelSerializer):
             "id", "doc_type", "status",
             "season", "flock", "partner",
             "doc_no", "date", "currency",
+            "vat_rate",
             "subtotal", "vat", "total",
             "notes",
             "created_by", "created_at",
             "lines",
         ]
-        read_only_fields = ["subtotal", "total", "created_by", "created_at"]
+        read_only_fields = ["subtotal", "vat", "total", "created_by", "created_at"]
 
     def create(self, validated_data):
         lines_data = validated_data.pop("lines", [])
@@ -45,7 +56,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         for ln in lines_data:
             DocumentLine.objects.create(document=doc, **ln)
         doc.recalc_totals()
-        doc.save(update_fields=["subtotal", "total"])
+        doc.save(update_fields=["subtotal", "vat", "total"])
         return doc
 
     def update(self, instance, validated_data):
@@ -58,7 +69,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             for ln in lines_data:
                 DocumentLine.objects.create(document=instance, **ln)
             instance.recalc_totals()
-            instance.save(update_fields=["subtotal", "total"])
+            instance.save(update_fields=["subtotal", "vat", "total"])
         return instance
 
 class PaymentSerializer(serializers.ModelSerializer):

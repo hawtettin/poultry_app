@@ -1,0 +1,176 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Cheltuială{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">{% if doc %}Editează cheltuială{% else %}Cheltuială nouă{% endif %}</h2>
+    <div class="text-muted">Linii alocate pe hală și lot + plăți + atașamente multiple.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
+</div>
+
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}" />
+
+  {% if doc_form.non_field_errors %}
+    <div class="alert alert-danger">{{ doc_form.non_field_errors }}</div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header">Detalii document</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label">{{ doc_form.date.label }}</label>
+          {{ doc_form.date }}
+          {{ doc_form.date.errors }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">{{ doc_form.season.label }}</label>
+          {{ doc_form.season }}
+          {{ doc_form.season.errors }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">{{ doc_form.supplier_name.label }}</label>
+          {{ doc_form.supplier_name }}
+          {{ doc_form.supplier_name.errors }}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">{{ doc_form.doc_no.label }}</label>
+          {{ doc_form.doc_no }}
+          {{ doc_form.doc_no.errors }}
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">{{ doc_form.vat_rate.label }}</label>
+          {{ doc_form.vat_rate }}
+          {{ doc_form.vat_rate.errors }}
+          <div class="form-text">Ex: 19</div>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">{{ doc_form.payment_status.label }}</label>
+          {{ doc_form.payment_status }}
+          {{ doc_form.payment_status.errors }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">{{ doc_form.payment_method.label }}</label>
+          {{ doc_form.payment_method }}
+          {{ doc_form.payment_method.errors }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">{{ doc_form.due_date.label }}</label>
+          {{ doc_form.due_date }}
+          {{ doc_form.due_date.errors }}
+          <div class="form-text">Obligatoriu la Neplătit/Parțial</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">{{ doc_form.paid_amount.label }}</label>
+          {{ doc_form.paid_amount }}
+          {{ doc_form.paid_amount.errors }}
+          <div class="form-text">Doar pentru Parțial (restul rămâne datorie)</div>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">{{ doc_form.notes.label }}</label>
+          {{ doc_form.notes }}
+          {{ doc_form.notes.errors }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Linii (alocări pe hală/lot)</div>
+    <div class="card-body">
+      {{ formset.management_form }}
+      {% if formset.non_form_errors %}
+        <div class="alert alert-danger">{{ formset.non_form_errors }}</div>
+      {% endif %}
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Hală</th>
+              <th>Lot</th>
+              <th>Denumire</th>
+              <th class="text-end">Cantitate</th>
+              <th>UM</th>
+              <th class="text-end">Preț unitar</th>
+              <th class="text-center">Șterge</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in formset.forms %}
+              <tr>
+                <td>
+                  {{ f.house }}
+                  {{ f.house.errors }}
+                </td>
+                <td>
+                  {{ f.flock }}
+                  {{ f.flock.errors }}
+                </td>
+                <td>
+                  {{ f.description }}
+                  {{ f.description.errors }}
+                </td>
+                <td class="text-end">
+                  {{ f.qty }}
+                  {{ f.qty.errors }}
+                </td>
+                <td>
+                  {{ f.unit }}
+                  {{ f.unit.errors }}
+                </td>
+                <td class="text-end">
+                  {{ f.unit_price }}
+                  {{ f.unit_price.errors }}
+                </td>
+                <td class="text-center">
+                  {% if f.DELETE %}{{ f.DELETE }}{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-text">Poți folosi mai multe linii pentru o factură comună (ex: gaz/curent împărțit pe hale). Dacă vrei cost/pui pe lot, completează și câmpul „Lot” pe linie.</div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Atașamente</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">{{ doc_form.attachments.label }}</label>
+        {{ doc_form.attachments }}
+        {{ doc_form.attachments.errors }}
+        <div class="form-text">Poți atașa mai multe fișiere (factură + chitanță/OP etc.).</div>
+      </div>
+
+      {% if doc and doc.attachments.all %}
+        <div class="text-muted small mb-2">Atașamente existente:</div>
+        <ul class="mb-0">
+          {% for a in doc.attachments.all %}
+            <li>
+              <a href="{{ a.file.url }}" target="_blank">{{ a.original_name|default:"fișier" }}</a>
+              <span class="text-muted">({{ a.uploaded_at|date:"Y-m-d H:i" }})</span>
+              <a class="btn btn-sm btn-outline-danger ms-2" href="{% url 'ui:expense_attachment_delete' a.id %}?next={{ request.get_full_path|urlencode }}">Șterge</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-success" type="submit">Salvează</button>
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Anulează</a>
+  </div>
+</form>
+{% endblock %}

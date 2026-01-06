@@ -12,6 +12,7 @@ from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum, Count
 from django.db.models.functions import Coalesce
+from django.forms import inlineformset_factory
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -24,7 +25,7 @@ from apps.core.models import Flock, House, Season
 from apps.health.models import MortalityEvent, Treatment
 from apps.auditlog.utils import log_event, snapshot
 from apps.auditlog.models import AuditEvent, AccessLog
-from apps.finance.models import Document, DocumentLine, Payment, Partner, Category
+from apps.finance.models import Document, DocumentLine, Payment, Partner, Category, ExpenseAttachment
 
 from .forms import (
     CreateSeriesForm,
@@ -32,6 +33,8 @@ from .forms import (
     MortalityQuickAddForm,
     MortalityEditForm,
     SaleQuickAddForm,
+    ExpenseDocumentForm,
+    ExpenseLineForm,
     StaffUserCreateForm,
     PaymentEditForm,
 )
@@ -110,6 +113,41 @@ def can_modify_sale(user, d: Document) -> bool:
 
     # doar pentru vânzări
     if getattr(d, "doc_type", None) != "sale":
+        return False
+
+    if is_manager(user):
+        return True
+
+    # EMPLOYEE: doar ale lui
+    if not user.groups.filter(name="EMPLOYEE").exists():
+        return False
+
+    if getattr(d, "created_by_id", None) != user.id:
+        return False
+
+    created_at = getattr(d, "created_at", None)
+    if not created_at:
+        return False
+
+    try:
+        created_day = timezone.localtime(created_at).date()
+    except Exception:
+        created_day = created_at.date()
+
+    return created_day == timezone.localdate()
+
+
+def can_modify_expense(user, d: Document) -> bool:
+    """Permisiuni UI pentru cheltuieli (Document doc_type='expense').
+
+    - ADMIN/MANAGER/superuser: orice cheltuială.
+    - EMPLOYEE: doar cheltuielile create de el și doar în ziua curentă.
+    """
+
+    if not getattr(user, "is_authenticated", False):
+        return False
+
+    if getattr(d, "doc_type", None) != "expense":
         return False
 
     if is_manager(user):
@@ -416,6 +454,180 @@ def dashboard(request):
         .order_by("-total")[:7]
     )
 
+    # -----------------
+    # Cheltuieli (mini-ERP) - listare + rezumat
+    # -----------------
+    exp_from = parse_date((request.GET.get("exp_from") or "").strip())
+    exp_to = parse_date((request.GET.get("exp_to") or "").strip())
+    exp_house = (request.GET.get("exp_house") or "").strip()
+    exp_flock = (request.GET.get("exp_flock") or "").strip()
+    exp_supplier = (request.GET.get("exp_supplier") or "").strip()
+    exp_status = (request.GET.get("exp_status") or "all").strip() or "all"
+    exp_has_attach = (request.GET.get("exp_has_attach") or "").strip()
+    exp_search = (request.GET.get("exp_search") or "").strip()
+
+    expenses_qs = (
+        Document.objects.filter(doc_type="expense")
+        .select_related("season", "partner")
+        .prefetch_related("lines", "payments", "attachments")
+    )
+
+    if exp_from:
+        expenses_qs = expenses_qs.filter(date__gte=exp_from)
+    if exp_to:
+        expenses_qs = expenses_qs.filter(date__lte=exp_to)
+    if exp_supplier:
+        expenses_qs = expenses_qs.filter(partner__name__icontains=exp_supplier)
+
+    # filtrare după alocări (linii)
+    if exp_house.isdigit():
+        expenses_qs = expenses_qs.filter(lines__house_id=int(exp_house)).distinct()
+    if exp_flock.isdigit():
+        expenses_qs = expenses_qs.filter(lines__flock_id=int(exp_flock)).distinct()
+
+    if exp_search:
+        expenses_qs = expenses_qs.filter(
+            Q(doc_no__icontains=exp_search)
+            | Q(notes__icontains=exp_search)
+            | Q(lines__description__icontains=exp_search)
+        ).distinct()
+
+    if exp_has_attach in ("1", "true", "True", "yes"):
+        expenses_qs = expenses_qs.filter(attachments__isnull=False).distinct()
+    elif exp_has_attach in ("0", "false", "False", "no"):
+        expenses_qs = expenses_qs.filter(attachments__isnull=True).distinct()
+
+    expenses_qs = expenses_qs.annotate(
+        paid_sum=Coalesce(Sum("payments__amount", filter=Q(payments__status="paid")), Decimal("0.00")),
+        due_sum=Coalesce(Sum("payments__amount", filter=Q(payments__status="due")), Decimal("0.00")),
+        attach_count=Count("attachments", distinct=True),
+    )
+
+    if exp_status == "paid":
+        expenses_qs = expenses_qs.filter(due_sum=Decimal("0.00"), paid_sum__gt=Decimal("0.00"))
+    elif exp_status == "unpaid":
+        expenses_qs = expenses_qs.filter(paid_sum=Decimal("0.00"))
+    elif exp_status == "partial":
+        expenses_qs = expenses_qs.filter(paid_sum__gt=Decimal("0.00"), due_sum__gt=Decimal("0.00"))
+
+    # ids (pentru totaluri fără dublări din join-uri)
+    expense_doc_ids = list(expenses_qs.values_list("id", flat=True).distinct())
+    expense_totals = {
+        "total": Decimal("0.00"),
+        "paid": Decimal("0.00"),
+        "due": Decimal("0.00"),
+        "count": len(expense_doc_ids),
+    }
+    if expense_doc_ids:
+        expense_totals["total"] = (
+            Document.objects.filter(id__in=expense_doc_ids).aggregate(s=Coalesce(Sum("total"), Decimal("0.00")))["s"]
+            or Decimal("0.00")
+        ).quantize(Decimal("0.01"))
+        pay_aggr = Payment.objects.filter(document_id__in=expense_doc_ids).aggregate(
+            paid=Coalesce(Sum("amount", filter=Q(status="paid")), Decimal("0.00")),
+            due=Coalesce(Sum("amount", filter=Q(status="due")), Decimal("0.00")),
+        )
+        expense_totals["paid"] = (pay_aggr.get("paid") or Decimal("0.00")).quantize(Decimal("0.01"))
+        expense_totals["due"] = (pay_aggr.get("due") or Decimal("0.00")).quantize(Decimal("0.01"))
+
+    # total luna curentă
+    month_start = today.replace(day=1)
+    month_total_expenses = (
+        Document.objects.filter(doc_type="expense", date__gte=month_start, date__lte=today)
+        .aggregate(s=Coalesce(Sum("total"), Decimal("0.00")))["s"]
+        or Decimal("0.00")
+    ).quantize(Decimal("0.01"))
+
+    # top denumiri (după liniile filtrate)
+    top_expense_names = []
+    if expense_doc_ids:
+        top_expense_names = (
+            DocumentLine.objects.filter(document_id__in=expense_doc_ids, document__doc_type="expense")
+            .values("description")
+            .annotate(total=Sum("line_total"))
+            .order_by("-total")[:7]
+        )
+
+    expenses_docs = list(expenses_qs.order_by("-date", "-id")[:200])
+    for d in expenses_docs:
+        # status pe document (derivat din plăți)
+        paid = (getattr(d, "paid_sum", None) or Decimal("0.00")).quantize(Decimal("0.01"))
+        due = (getattr(d, "due_sum", None) or Decimal("0.00")).quantize(Decimal("0.01"))
+        if paid > 0 and due > 0:
+            d.pay_status = "partial"
+            d.pay_status_label = "Parțial"
+        elif due > 0 and paid == 0:
+            d.pay_status = "unpaid"
+            d.pay_status_label = "Neplătit"
+        elif due == 0 and paid > 0:
+            d.pay_status = "paid"
+            d.pay_status_label = "Plătit"
+        else:
+            d.pay_status = "unpaid"
+            d.pay_status_label = "Neplătit"
+
+        # scadența următoare (din plăți due)
+        try:
+            dues = [p.due_date for p in d.payments.all() if p.status == "due" and p.due_date]
+            d.next_due_date = min(dues) if dues else None
+        except Exception:
+            d.next_due_date = None
+
+        # hale/loturi implicate (din linii)
+        try:
+            houses = []
+            flocks_in_doc = []
+            for ln in d.lines.all():
+                if getattr(ln, "house", None):
+                    houses.append(ln.house.name)
+                if getattr(ln, "flock", None):
+                    flocks_in_doc.append(ln.flock)
+            d.houses_label = ", ".join(sorted(set(houses))) if houses else "—"
+            d.flocks_count = len({f.id for f in flocks_in_doc}) if flocks_in_doc else 0
+        except Exception:
+            d.houses_label = "—"
+            d.flocks_count = 0
+
+        d.can_modify = can_modify_expense(request.user, d)
+
+    # cost pe lot (defalcat) pentru filtrul curent
+    expense_cost_by_flock = []
+    if expense_doc_ids:
+        rows = (
+            DocumentLine.objects.filter(document_id__in=expense_doc_ids, document__doc_type="expense")
+            .filter(flock__isnull=False)
+            .values("flock")
+            .annotate(cost=Sum("line_total"))
+            .order_by("-cost")
+        )
+        flock_ids = [int(r["flock"]) for r in rows]
+        flocks_map = {
+            f.id: f
+            for f in Flock.objects.filter(id__in=flock_ids).select_related("season", "house")
+        }
+        for r in rows:
+            fid = int(r["flock"]) if r.get("flock") else None
+            f = flocks_map.get(fid)
+            cost = (r.get("cost") or Decimal("0.00")).quantize(Decimal("0.01"))
+            if not f:
+                continue
+            init_total = int(getattr(f, "initial_count", 0) or 0)
+            # folosim initial_total dacă există defalcare
+            try:
+                init_total = int((getattr(f, "initial_white_count", 0) or 0) + (getattr(f, "initial_colored_count", 0) or 0))
+                if init_total <= 0:
+                    init_total = int(getattr(f, "initial_count", 0) or 0)
+            except Exception:
+                init_total = int(getattr(f, "initial_count", 0) or 0)
+
+            cost_per_chick = (cost / Decimal(init_total)).quantize(Decimal("0.0001")) if init_total else Decimal("0")
+            expense_cost_by_flock.append({
+                "flock": f,
+                "cost": cost,
+                "init_total": init_total,
+                "cost_per_chick": cost_per_chick,
+            })
+
     today_weekday = WEEKDAYS_RO[today.weekday()]
 
     return render(request, "ui/dashboard.html", {
@@ -444,6 +656,23 @@ def dashboard(request):
         "today": today,
         "today_weekday": today_weekday,
         "is_manager": is_manager(request.user),
+
+        # Cheltuieli
+        "expenses": expenses_docs,
+        "exp_from": exp_from,
+        "exp_to": exp_to,
+        "exp_house": exp_house,
+        "exp_flock": exp_flock,
+        "exp_supplier": exp_supplier,
+        "exp_status": exp_status,
+        "exp_has_attach": exp_has_attach,
+        "exp_search": exp_search,
+        "expense_totals": expense_totals,
+        "month_total_expenses": month_total_expenses,
+        "top_expense_names": top_expense_names,
+        "expense_cost_by_flock": expense_cost_by_flock,
+        "houses_list": House.objects.all().order_by("name"),
+        "flocks_list": Flock.objects.select_related("season", "house").all().order_by("-start_date", "-id"),
     })
 
 
@@ -547,10 +776,11 @@ def flock_delete(request, pk: int):
     next_url = safe_next_url(request, default_next)
 
     # Statistici pentru pagina de confirmare
-    docs_qs = Document.objects.filter(flock=flock)
+    # Include și cheltuieli alocate prin linii (Document.flock poate fi NULL pentru cheltuieli "comune")
+    docs_qs = Document.objects.filter(Q(flock=flock) | Q(lines__flock=flock)).distinct()
     docs_count = docs_qs.count()
-    lines_count = DocumentLine.objects.filter(document__flock=flock).count()
-    payments_count = Payment.objects.filter(document__flock=flock).count()
+    lines_count = DocumentLine.objects.filter(Q(document__flock=flock) | Q(flock=flock)).count()
+    payments_count = Payment.objects.filter(document__in=docs_qs).count()
     mortality_count = MortalityEvent.objects.filter(flock=flock).count()
     treatments_count = Treatment.objects.filter(flock=flock).count()
 
@@ -638,9 +868,10 @@ def house_delete(request, pk: int):
 
     # Statistici pentru confirmare
     flocks_count = len(flocks)
-    docs_count = Document.objects.filter(flock__house=house).count()
-    payments_count = Payment.objects.filter(document__flock__house=house).count()
-    lines_count = DocumentLine.objects.filter(document__flock__house=house).count()
+    docs_qs = Document.objects.filter(Q(flock__house=house) | Q(lines__house=house)).distinct()
+    docs_count = docs_qs.count()
+    payments_count = Payment.objects.filter(document__in=docs_qs).count()
+    lines_count = DocumentLine.objects.filter(Q(document__flock__house=house) | Q(house=house)).count()
     mortality_count = MortalityEvent.objects.filter(flock__house=house).count()
     treatments_count = Treatment.objects.filter(flock__house=house).count()
 
@@ -658,21 +889,24 @@ def house_delete(request, pk: int):
         )
 
         with transaction.atomic():
-            # Ștergem fiecare lot + documente
+            # 1) Ștergem toate documentele alocate halei (atât prin Document.flock, cât și prin DocumentLine.house)
+            docs_qs.delete()  # cascade: lines + payments + attachments
+
+            # 2) Ștergem loturile (cascade: mortalitate + tratamente)
+            seasons = set()
             for f in flocks:
-                season = f.season
+                seasons.add(f.season_id)
+                f.delete()
 
-                Document.objects.filter(flock=f).delete()  # cascade payments + lines
-                f.delete()  # cascade mortality + treatments
-
-                # Ștergem sezonul dacă a rămas gol (și fără documente)
+            # 3) Ștergem sezoanele rămase goale
+            for season_id in seasons:
                 try:
-                    if (not Flock.objects.filter(season=season).exists()) and (not Document.objects.filter(season=season).exists()):
-                        season.delete()
+                    if (not Flock.objects.filter(season_id=season_id).exists()) and (not Document.objects.filter(season_id=season_id).exists()):
+                        Season.objects.filter(id=season_id).delete()
                 except Exception:
                     pass
 
-            # În final, ștergem hala
+            # 4) În final, ștergem hala
             house.delete()
 
         messages.success(request, "Hala a fost ștearsă definitiv (împreună cu toate loturile și documentele din ea).")
@@ -719,6 +953,7 @@ def cleanup_all(request):
         "documents": Document.objects.count(),
         "document_lines": DocumentLine.objects.count(),
         "payments": Payment.objects.count(),
+        "expense_attachments": ExpenseAttachment.objects.count(),
         "partners": Partner.objects.count(),
         "categories": Category.objects.count(),
         "audit_events": AuditEvent.objects.count(),
@@ -1255,6 +1490,443 @@ def sale_delete(request, pk: int):
             "next_url": next_url,
         },
     )
+
+
+# -----------------
+# Cheltuieli (mini-ERP)
+# -----------------
+
+
+@login_required
+def expense_create(request):
+    """Creare cheltuială (Document doc_type='expense') + linii alocate + plăți + atașamente."""
+
+    default_next = reverse("ui:dashboard") + "?tab=expenses"
+    next_url = safe_next_url(request, default_next)
+
+    LineFormSet = inlineformset_factory(
+        Document,
+        DocumentLine,
+        form=ExpenseLineForm,
+        extra=8,
+        can_delete=True,
+    )
+
+    if request.method == "POST":
+        doc_form = ExpenseDocumentForm(request.POST, request.FILES)
+
+        # instanță dummy doar pentru validare formset (înainte de a avea Document salvat)
+        dummy = Document(doc_type="expense", status="approved", currency="RON")
+        formset = LineFormSet(request.POST, instance=dummy, prefix="lines")
+
+        if doc_form.is_valid() and formset.is_valid():
+            # măcar o linie completată
+            has_any_line = False
+            for f in formset.forms:
+                try:
+                    cd = f.cleaned_data
+                except Exception:
+                    cd = None
+                if not cd:
+                    continue
+                if cd.get("DELETE"):
+                    continue
+                # dacă form-ul nu e gol, sigur e o linie
+                if cd.get("description"):
+                    has_any_line = True
+                    break
+            if not has_any_line:
+                messages.error(request, "Adaugă cel puțin o linie de cheltuială.")
+                return render(request, "ui/expense_form.html", {"doc_form": doc_form, "formset": formset, "next_url": next_url})
+
+            with transaction.atomic():
+                supplier_name = doc_form.cleaned_data["supplier_name"]
+                partner, _ = Partner.objects.get_or_create(
+                    name=supplier_name,
+                    defaults={"partner_type": "supplier"},
+                )
+
+                season = doc_form.cleaned_data["season"]
+
+                doc = Document.objects.create(
+                    doc_type="expense",
+                    status="approved",
+                    season=season,
+                    flock=None,
+                    partner=partner,
+                    doc_no=(doc_form.cleaned_data.get("doc_no") or ""),
+                    date=doc_form.cleaned_data["date"],
+                    currency="RON",
+                    vat_rate=(doc_form.cleaned_data.get("vat_rate") or Decimal("0")),
+                    notes=(doc_form.cleaned_data.get("notes") or ""),
+                    created_by=request.user if getattr(request.user, "is_authenticated", False) else None,
+                )
+
+                # salvăm liniile
+                formset.instance = doc
+                formset.save()
+
+                # Totale (TVA inclus)
+                doc.recalc_totals()
+                doc.save(update_fields=["subtotal", "vat", "total", "vat_rate"])
+
+                # Plăți inițiale (conform status)
+                doc.payments.all().delete()
+                status = (doc_form.cleaned_data.get("payment_status") or "unpaid").strip() or "unpaid"
+                method = (doc_form.cleaned_data.get("payment_method") or "bank").strip() or "bank"
+                due_date = doc_form.cleaned_data.get("due_date") or doc.date
+                paid_amount = (doc_form.cleaned_data.get("paid_amount") or Decimal("0.00")).quantize(Decimal("0.01"))
+                total = (doc.total or Decimal("0.00")).quantize(Decimal("0.01"))
+
+                # normalize paid_amount
+                if paid_amount < 0:
+                    paid_amount = Decimal("0.00")
+                if paid_amount > total:
+                    paid_amount = total
+
+                if status == "paid":
+                    if total > 0:
+                        Payment.objects.create(
+                            document=doc,
+                            due_date=doc.date,
+                            paid_date=doc.date,
+                            amount=total,
+                            method=method,
+                            status="paid",
+                            created_by=request.user if getattr(request.user, "is_authenticated", False) else None,
+                        )
+                elif status == "partial":
+                    if paid_amount > 0:
+                        Payment.objects.create(
+                            document=doc,
+                            due_date=doc.date,
+                            paid_date=doc.date,
+                            amount=paid_amount,
+                            method=method,
+                            status="paid",
+                            created_by=request.user if getattr(request.user, "is_authenticated", False) else None,
+                        )
+                    remaining = (total - paid_amount).quantize(Decimal("0.01"))
+                    if remaining > 0:
+                        Payment.objects.create(
+                            document=doc,
+                            due_date=due_date,
+                            amount=remaining,
+                            method=method,
+                            status="due",
+                            created_by=request.user if getattr(request.user, "is_authenticated", False) else None,
+                        )
+                else:
+                    # unpaid
+                    if total > 0:
+                        Payment.objects.create(
+                            document=doc,
+                            due_date=due_date,
+                            amount=total,
+                            method=method,
+                            status="due",
+                            created_by=request.user if getattr(request.user, "is_authenticated", False) else None,
+                        )
+
+                # Atașamente multiple
+                for f in request.FILES.getlist("attachments"):
+                    try:
+                        ExpenseAttachment.objects.create(
+                            document=doc,
+                            file=f,
+                            original_name=getattr(f, "name", "") or "",
+                            uploaded_by=request.user if getattr(request.user, "is_authenticated", False) else None,
+                        )
+                    except Exception:
+                        pass
+
+                log_event(
+                    actor=request.user,
+                    action="CREATE",
+                    instance=doc,
+                    message=f"CREATE cheltuială: doc#{doc.id} ({doc.total} {doc.currency})",
+                    before=None,
+                    after=snapshot(doc),
+                    request=request,
+                )
+
+            messages.success(request, "Cheltuiala a fost salvată.")
+            return redirect(next_url)
+
+        messages.error(request, "Nu am putut salva cheltuiala. Verifică datele.")
+
+    else:
+        doc_form = ExpenseDocumentForm()
+        formset = LineFormSet(prefix="lines", instance=Document())
+
+    return render(request, "ui/expense_form.html", {"doc_form": doc_form, "formset": formset, "next_url": next_url})
+
+
+@login_required
+def expense_detail(request, pk: int):
+    d = get_object_or_404(
+        Document.objects
+        .select_related("season", "partner", "created_by")
+        .prefetch_related("lines", "payments", "attachments"),
+        pk=pk,
+        doc_type="expense",
+    )
+
+    d.can_modify = can_modify_expense(request.user, d)
+
+    # status derivat
+    paid = sum((p.amount for p in d.payments.all() if p.status == "paid"), Decimal("0.00")).quantize(Decimal("0.01"))
+    due = sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00")).quantize(Decimal("0.01"))
+    if paid > 0 and due > 0:
+        d.pay_status_label = "Parțial"
+    elif due > 0 and paid == 0:
+        d.pay_status_label = "Neplătit"
+    elif due == 0 and paid > 0:
+        d.pay_status_label = "Plătit"
+    else:
+        d.pay_status_label = "Neplătit"
+
+    return render(request, "ui/expense_detail.html", {"d": d})
+
+
+@login_required
+def expense_edit(request, pk: int):
+    d = get_object_or_404(
+        Document.objects
+        .select_related("season", "partner", "created_by")
+        .prefetch_related("lines", "payments", "attachments"),
+        pk=pk,
+        doc_type="expense",
+    )
+
+    if not can_modify_expense(request.user, d):
+        messages.error(request, "Nu ai drepturi să editezi această cheltuială.")
+        return redirect("ui:dashboard")
+
+    default_next = reverse("ui:expense_detail", args=[d.id])
+    next_url = safe_next_url(request, default_next)
+
+    LineFormSet = inlineformset_factory(
+        Document,
+        DocumentLine,
+        form=ExpenseLineForm,
+        extra=5,
+        can_delete=True,
+    )
+
+    # status inițial pentru UI
+    paid_sum = sum((p.amount for p in d.payments.all() if p.status == "paid"), Decimal("0.00")).quantize(Decimal("0.01"))
+    due_sum = sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00")).quantize(Decimal("0.01"))
+    if paid_sum > 0 and due_sum > 0:
+        init_status = "partial"
+        init_paid_amount = paid_sum
+        init_due_date = min([p.due_date for p in d.payments.all() if p.status == "due" and p.due_date] or [d.date])
+    elif due_sum > 0 and paid_sum == 0:
+        init_status = "unpaid"
+        init_paid_amount = Decimal("0.00")
+        init_due_date = min([p.due_date for p in d.payments.all() if p.status == "due" and p.due_date] or [d.date])
+    else:
+        init_status = "paid"
+        init_paid_amount = (d.total or Decimal("0.00")).quantize(Decimal("0.01"))
+        init_due_date = d.date
+
+    if request.method == "POST":
+        doc_form = ExpenseDocumentForm(request.POST, request.FILES)
+        formset = LineFormSet(request.POST, instance=d, prefix="lines")
+
+        if doc_form.is_valid() and formset.is_valid():
+            before = snapshot(d)
+            with transaction.atomic():
+                supplier_name = doc_form.cleaned_data["supplier_name"]
+                partner, _ = Partner.objects.get_or_create(
+                    name=supplier_name,
+                    defaults={"partner_type": "supplier"},
+                )
+                d.partner = partner
+                d.season = doc_form.cleaned_data["season"]
+                d.doc_no = (doc_form.cleaned_data.get("doc_no") or "")
+                d.date = doc_form.cleaned_data["date"]
+                d.vat_rate = (doc_form.cleaned_data.get("vat_rate") or Decimal("0"))
+                d.notes = (doc_form.cleaned_data.get("notes") or "")
+                d.save(update_fields=["partner", "season", "doc_no", "date", "vat_rate", "notes"])
+
+                formset.save()
+
+                d.recalc_totals()
+                d.save(update_fields=["subtotal", "vat", "total"])
+
+                # recreăm plățile
+                d.payments.all().delete()
+                status = (doc_form.cleaned_data.get("payment_status") or "unpaid").strip() or "unpaid"
+                method = (doc_form.cleaned_data.get("payment_method") or "bank").strip() or "bank"
+                due_date = doc_form.cleaned_data.get("due_date") or d.date
+                paid_amount = (doc_form.cleaned_data.get("paid_amount") or Decimal("0.00")).quantize(Decimal("0.01"))
+                total = (d.total or Decimal("0.00")).quantize(Decimal("0.01"))
+                if paid_amount < 0:
+                    paid_amount = Decimal("0.00")
+                if paid_amount > total:
+                    paid_amount = total
+
+                if status == "paid":
+                    if total > 0:
+                        Payment.objects.create(
+                            document=d,
+                            due_date=d.date,
+                            paid_date=d.date,
+                            amount=total,
+                            method=method,
+                            status="paid",
+                            created_by=request.user,
+                        )
+                elif status == "partial":
+                    if paid_amount > 0:
+                        Payment.objects.create(
+                            document=d,
+                            due_date=d.date,
+                            paid_date=d.date,
+                            amount=paid_amount,
+                            method=method,
+                            status="paid",
+                            created_by=request.user,
+                        )
+                    remaining = (total - paid_amount).quantize(Decimal("0.01"))
+                    if remaining > 0:
+                        Payment.objects.create(
+                            document=d,
+                            due_date=due_date,
+                            amount=remaining,
+                            method=method,
+                            status="due",
+                            created_by=request.user,
+                        )
+                else:
+                    if total > 0:
+                        Payment.objects.create(
+                            document=d,
+                            due_date=due_date,
+                            amount=total,
+                            method=method,
+                            status="due",
+                            created_by=request.user,
+                        )
+
+                # atașamente noi (nu ștergem pe cele vechi automat)
+                for f in request.FILES.getlist("attachments"):
+                    try:
+                        ExpenseAttachment.objects.create(
+                            document=d,
+                            file=f,
+                            original_name=getattr(f, "name", "") or "",
+                            uploaded_by=request.user,
+                        )
+                    except Exception:
+                        pass
+
+                log_event(
+                    actor=request.user,
+                    action="UPDATE",
+                    instance=d,
+                    message=f"UPDATE cheltuială: doc#{d.id}",
+                    before=before,
+                    after=snapshot(d),
+                    request=request,
+                )
+
+            messages.success(request, "Cheltuiala a fost actualizată.")
+            return redirect(next_url)
+
+        messages.error(request, "Nu am putut salva modificările. Verifică datele.")
+
+    else:
+        doc_form = ExpenseDocumentForm(initial={
+            "date": d.date,
+            "season": d.season,
+            "supplier_name": (d.partner.name if d.partner else ""),
+            "doc_no": d.doc_no,
+            "vat_rate": d.vat_rate,
+            "notes": d.notes,
+            "payment_status": init_status,
+            "payment_method": (d.payments.first().method if d.payments.exists() else "bank"),
+            "due_date": init_due_date,
+            "paid_amount": init_paid_amount,
+        })
+        formset = LineFormSet(prefix="lines", instance=d)
+
+    return render(request, "ui/expense_form.html", {"doc_form": doc_form, "formset": formset, "doc": d, "next_url": next_url})
+
+
+@login_required
+def expense_delete(request, pk: int):
+    d = get_object_or_404(
+        Document.objects.select_related("season", "partner", "created_by").prefetch_related("lines", "payments", "attachments"),
+        pk=pk,
+        doc_type="expense",
+    )
+
+    if not can_modify_expense(request.user, d):
+        messages.error(request, "Nu ai drepturi să ștergi această cheltuială.")
+        return redirect("ui:dashboard")
+
+    default_next = reverse("ui:dashboard") + "?tab=expenses"
+    next_url = safe_next_url(request, default_next)
+
+    if request.method == "POST":
+        before = snapshot(d)
+        log_event(
+            actor=request.user,
+            action="DELETE",
+            instance=d,
+            message=f"DELETE cheltuială: doc#{d.id} ({d.total} {d.currency})",
+            before=before,
+            after=None,
+            request=request,
+        )
+        d.delete()
+        messages.success(request, "Cheltuiala a fost ștearsă definitiv.")
+        return redirect(next_url)
+
+    return render(
+        request,
+        "ui/expense_confirm_delete.html",
+        {
+            "d": d,
+            "next_url": next_url,
+            "lines_count": d.lines.count(),
+            "payments_count": d.payments.count(),
+            "attachments_count": d.attachments.count(),
+        },
+    )
+
+
+@login_required
+def expense_attachment_delete(request, pk: int):
+    att = get_object_or_404(
+        ExpenseAttachment.objects.select_related("document", "document__created_by"),
+        pk=pk,
+    )
+    d = att.document
+    if getattr(d, "doc_type", None) != "expense":
+        messages.error(request, "Atașament invalid.")
+        return redirect("ui:dashboard")
+
+    if not can_modify_expense(request.user, d):
+        messages.error(request, "Nu ai drepturi să ștergi acest atașament.")
+        return redirect("ui:expense_detail", pk=d.id)
+
+    next_url = safe_next_url(request, reverse("ui:expense_edit", args=[d.id]))
+
+    if request.method == "POST":
+        try:
+            # ștergem și fișierul din storage
+            if att.file:
+                att.file.delete(save=False)
+        except Exception:
+            pass
+        att.delete()
+        messages.success(request, "Atașamentul a fost șters.")
+        return redirect(next_url)
+
+    return render(request, "ui/expense_attachment_confirm_delete.html", {"att": att, "d": d, "next_url": next_url})
 
 
 @login_required

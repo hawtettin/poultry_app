@@ -6,6 +6,11 @@ from django.utils import timezone
 
 from apps.core.models import Season, Flock
 
+
+def _q2(v: Decimal) -> Decimal:
+    """Quantize helper: 2 decimals."""
+    return (v or Decimal("0.00")).quantize(Decimal("0.01"))
+
 class Partner(models.Model):
     PARTNER_TYPES = [
         ("supplier", "Furnizor"),
@@ -45,6 +50,9 @@ class Document(models.Model):
     date = models.DateField(default=timezone.localdate)
     currency = models.CharField(max_length=10, default="RON")
 
+    # TVA (procent). Exemplu: 19.00 = 19%
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
+
     subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     vat = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
@@ -59,11 +67,37 @@ class Document(models.Model):
 
     def recalc_totals(self):
         subtotal = sum((ln.line_total for ln in self.lines.all()), Decimal("0.00"))
-        self.subtotal = subtotal
-        self.total = (self.subtotal + self.vat).quantize(Decimal("0.01"))
+        self.subtotal = _q2(subtotal)
+
+        # TVA calculat automat din vat_rate.
+        try:
+            rate = Decimal(str(self.vat_rate or "0"))
+        except Exception:
+            rate = Decimal("0")
+        if rate < 0:
+            rate = Decimal("0")
+        self.vat = _q2(self.subtotal * rate / Decimal("100"))
+        self.total = _q2(self.subtotal + self.vat)
 
 class DocumentLine(models.Model):
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="lines")
+
+    # Pentru mini-ERP cheltuieli: o factură poate avea linii alocate pe hale/serii.
+    # Pentru compatibilitate cu vânzările existente, câmpurile sunt opționale.
+    house = models.ForeignKey(
+        "core.House",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="document_lines",
+    )
+    flock = models.ForeignKey(
+        Flock,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="document_lines",
+    )
     category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.PROTECT)
     description = models.CharField(max_length=250, blank=True, default="")
     qty = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("1.000"))
@@ -75,10 +109,30 @@ class DocumentLine(models.Model):
         self.line_total = (self.qty * self.unit_price).quantize(Decimal("0.01"))
         super().save(*args, **kwargs)
         self.document.recalc_totals()
-        self.document.save(update_fields=["subtotal", "total"])
+        self.document.save(update_fields=["subtotal", "vat", "total"])
+
+
+class ExpenseAttachment(models.Model):
+    """Atașamente multiple pentru cheltuieli.
+
+    Legăm atașamentele de Document (doc_type='expense').
+    Nu impunem la nivel DB ca documentul să fie expense, dar UI-ul folosește doar pe cheltuieli.
+    """
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="attachments")
+    file = models.FileField(upload_to="expense_attachments/%Y/%m/")
+    original_name = models.CharField(max_length=255, blank=True, default="")
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at", "-id"]
+
+    def __str__(self) -> str:
+        return self.original_name or (getattr(self.file, "name", "") or f"attachment#{self.pk}")
 
 class Payment(models.Model):
-    METHODS = [("cash", "Cash"), ("bank", "Banca"), ("card", "Card"), ("other", "Altul")]
+    METHODS = [("cash", "Cash"), ("bank", "OP"), ("card", "Card"), ("other", "Altul")]
     STATUS = [("due", "Scadent"), ("paid", "Platit")]
 
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="payments")

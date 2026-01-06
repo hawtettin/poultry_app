@@ -1,0 +1,30 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Șterge cheltuială{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <h2>Șterge cheltuială #{{ d.id }}</h2>
+  <div class="text-muted">Acțiunea șterge definitiv documentul, liniile, plățile și atașamentele.</div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div><span class="text-muted">Data:</span> {{ d.date }}</div>
+    <div><span class="text-muted">Furnizor:</span> {{ d.partner.name|default:"—" }}</div>
+    <div><span class="text-muted">Nr doc:</span> {{ d.doc_no|default:"—" }}</div>
+    <div><span class="text-muted">Total:</span> <span class="fw-semibold">{{ d.total }} RON</span></div>
+    <hr>
+    <div class="text-muted small">Conține: {{ lines_count }} linii • {{ payments_count }} plăți • {{ attachments_count }} atașamente</div>
+  </div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}" />
+  <div class="d-flex gap-2">
+    <button class="btn btn-danger" type="submit">Da, șterge definitiv</button>
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Renunță</a>
+  </div>
+</form>
+{% endblock %}

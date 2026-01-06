@@ -1,0 +1,26 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Șterge atașament{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <h2>Șterge atașament</h2>
+  <div class="text-muted">Cheltuială #{{ d.id }} • {{ d.partner.name|default:"—" }}</div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div><span class="text-muted">Fișier:</span> {{ att.original_name|default:"fișier" }}</div>
+    <div><a href="{{ att.file.url }}" target="_blank">Deschide fișierul</a></div>
+  </div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}" />
+  <div class="d-flex gap-2">
+    <button class="btn btn-danger" type="submit">Da, șterge</button>
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Renunță</a>
+  </div>
+</form>
+{% endblock %}

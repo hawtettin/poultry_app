@@ -595,6 +595,8 @@ class SaleQuickAddForm(forms.Form):
         if pui_albi > 0:
             DocumentLine.objects.create(
                 document=doc,
+                house=flock.house,
+                flock=flock,
                 description="Pui albi",
                 qty=Decimal(pui_albi),
                 unit="cap",
@@ -603,6 +605,8 @@ class SaleQuickAddForm(forms.Form):
         if pui_colorati > 0:
             DocumentLine.objects.create(
                 document=doc,
+                house=flock.house,
+                flock=flock,
                 description="Pui colorați",
                 qty=Decimal(pui_colorati),
                 unit="cap",
@@ -611,6 +615,8 @@ class SaleQuickAddForm(forms.Form):
         if furaj_kg and furaj_kg > 0:
             DocumentLine.objects.create(
                 document=doc,
+                house=flock.house,
+                flock=flock,
                 description="Furaj",
                 qty=furaj_kg,
                 unit="kg",
@@ -619,7 +625,7 @@ class SaleQuickAddForm(forms.Form):
 
         # recalc (în caz că nu există linii sau pentru siguranță)
         doc.recalc_totals()
-        doc.save(update_fields=["subtotal", "total"])
+        doc.save(update_fields=["subtotal", "vat", "total"])
 
         # 1) Încasat (cash) = total - datorie
         cash_amount = (doc.total or Decimal("0.00")) - (datorie or Decimal("0.00"))
@@ -682,5 +688,178 @@ class PaymentEditForm(forms.ModelForm):
         amount = cleaned.get("amount")
         if amount is not None and amount <= 0:
             raise ValidationError("Suma trebuie să fie pozitivă.")
+
+        return cleaned
+
+
+# -----------------------------
+# Cheltuieli (mini-ERP)
+# -----------------------------
+
+
+EXPENSE_PAYMENT_STATUS = [
+    ("unpaid", "Neplătit"),
+    ("paid", "Plătit"),
+    ("partial", "Parțial"),
+]
+
+
+EXPENSE_PAYMENT_METHOD = [
+    ("cash", "Cash"),
+    # În model, metoda se cheamă "bank"; în UI o afișăm ca OP.
+    ("bank", "OP (transfer bancar)"),
+    ("other", "Altul"),
+]
+
+
+class ExpenseDocumentForm(forms.Form):
+    """Header cheltuială (Document doc_type='expense').
+
+    Notă: este Form (nu ModelForm) ca să putem:
+      - crea furnizorul dintr-un câmp text
+      - seta status de plată / scadență / plăți inițiale
+      - încărca atașamente multiple
+    """
+
+    date = forms.DateField(
+        label="Data",
+        initial=timezone.localdate,
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+    )
+
+    season = forms.ModelChoiceField(
+        label="Serie (sezon)",
+        queryset=Season.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    supplier_name = forms.CharField(
+        label="Furnizor",
+        max_length=200,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "ex: E.ON, Dedeman"}),
+    )
+
+    doc_no = forms.CharField(
+        label="Nr document (factură/bon/OP)",
+        max_length=80,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "ex: FV123 / Bon 456"}),
+    )
+
+    vat_rate = forms.DecimalField(
+        label="TVA (%)",
+        required=False,
+        min_value=Decimal("0"),
+        max_digits=5,
+        decimal_places=2,
+        initial=Decimal("0"),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
+    )
+
+    payment_status = forms.ChoiceField(
+        label="Status plată",
+        choices=EXPENSE_PAYMENT_STATUS,
+        initial="unpaid",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    payment_method = forms.ChoiceField(
+        label="Metoda plată",
+        choices=EXPENSE_PAYMENT_METHOD,
+        initial="bank",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    due_date = forms.DateField(
+        label="Scadență",
+        required=False,
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+    )
+
+    paid_amount = forms.DecimalField(
+        label="Suma plătită (doar pentru 'Parțial')",
+        required=False,
+        min_value=Decimal("0"),
+        max_digits=14,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "inputmode": "decimal"}),
+    )
+
+    notes = forms.CharField(
+        label="Note (opțional)",
+        required=False,
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "detalii utile"}),
+    )
+
+    attachments = forms.FileField(
+        label="Atașamente (factură, chitanță, OP)",
+        required=False,
+        widget=forms.ClearableFileInput(attrs={"class": "form-control", "multiple": True}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["season"].queryset = Season.objects.all().order_by("-start_date", "-id")
+
+        # default: primul sezon activ, dacă există
+        if not self.initial.get("season"):
+            active = Season.objects.filter(is_active=True).order_by("-start_date", "-id").first()
+            if active:
+                self.initial["season"] = active
+
+    def clean(self):
+        cleaned = super().clean()
+        supplier = (cleaned.get("supplier_name") or "").strip()
+        if not supplier:
+            raise ValidationError("Completează furnizorul.")
+
+        status = (cleaned.get("payment_status") or "").strip() or "unpaid"
+        due = cleaned.get("due_date")
+
+        if status in ("unpaid", "partial") and not due:
+            raise ValidationError("Completează scadența pentru facturi neplătite/parțiale.")
+
+        cleaned["supplier_name"] = supplier
+        return cleaned
+
+
+class ExpenseLineForm(forms.ModelForm):
+    """Linie de cheltuială (DocumentLine) cu alocare pe hală/serie."""
+
+    class Meta:
+        model = DocumentLine
+        fields = ["house", "flock", "description", "qty", "unit", "unit_price"]
+        widgets = {
+            "house": forms.Select(attrs={"class": "form-select"}),
+            "flock": forms.Select(attrs={"class": "form-select"}),
+            "description": forms.TextInput(attrs={"class": "form-control", "placeholder": "ex: Gaz / Apă / Motorină"}),
+            "qty": forms.NumberInput(attrs={"class": "form-control", "step": "0.001", "inputmode": "decimal"}),
+            "unit": forms.TextInput(attrs={"class": "form-control", "placeholder": "kg / L / buc"}),
+            "unit_price": forms.NumberInput(attrs={"class": "form-control", "step": "0.0001", "inputmode": "decimal"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Querysets
+        self.fields["house"].queryset = House.objects.all().order_by("name")
+        self.fields["flock"].queryset = Flock.objects.select_related("season", "house").all().order_by("-start_date", "-id")
+        self.fields["flock"].required = False
+
+        # UX defaults
+        if self.fields.get("qty") and self.initial.get("qty") is None:
+            self.initial["qty"] = Decimal("1.000")
+
+    def clean(self):
+        cleaned = super().clean()
+        house = cleaned.get("house")
+        flock = cleaned.get("flock")
+
+        # Dacă user alege flock, house trebuie să corespundă.
+        if flock and house and getattr(flock, "house_id", None) != getattr(house, "id", None):
+            raise ValidationError("Seria (lotul) selectată nu aparține halei selectate.")
+
+        # Dacă alege flock, dar uită house, îl completăm automat.
+        if flock and not house:
+            cleaned["house"] = flock.house
 
         return cleaned

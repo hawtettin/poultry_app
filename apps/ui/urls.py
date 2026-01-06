@@ -30,6 +30,12 @@ urlpatterns = [
 
     # Vânzări
     path("sales/<int:pk>/delete/", views.sale_delete, name="sale_delete"),
+    # Cheltuieli
+    path("expenses/new/", views.expense_create, name="expense_create"),
+    path("expenses/<int:pk>/", views.expense_detail, name="expense_detail"),
+    path("expenses/<int:pk>/edit/", views.expense_edit, name="expense_edit"),
+    path("expenses/<int:pk>/delete/", views.expense_delete, name="expense_delete"),
+    path("expense-attachments/<int:pk>/delete/", views.expense_attachment_delete, name="expense_attachment_delete"),
     path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
     path("sales/export.xlsx", views.sales_export_xlsx, name="sales_export_xlsx"),
     path("payments/ledger/", views.payment_ledger, name="payment_ledger"),
