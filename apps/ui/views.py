@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import csv
+from io import BytesIO
+
+import openpyxl
 from decimal import Decimal
 
 from django.contrib import messages
@@ -873,6 +876,97 @@ def sales_export_csv(request):
         ])
 
     return resp
+
+@login_required
+def sales_export_xlsx(request):
+    """Export Excel (.xlsx) pentru vânzări (aceleași filtre ca CSV)."""
+    sales_from = parse_date((request.GET.get("sales_from") or "").strip())
+    sales_to = parse_date((request.GET.get("sales_to") or "").strip())
+    sales_buyer = (request.GET.get("sales_buyer") or "").strip()
+    sales_flock = (request.GET.get("sales_flock") or "").strip()
+    sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ("1", "true", "True", "yes")
+
+    sales_qs = (
+        Document.objects.filter(doc_type="sale")
+        .select_related("flock", "flock__season", "flock__house", "partner")
+        .prefetch_related("lines", "payments")
+        .order_by("-date", "-id")
+    )
+    if sales_from:
+        sales_qs = sales_qs.filter(date__gte=sales_from)
+    if sales_to:
+        sales_qs = sales_qs.filter(date__lte=sales_to)
+    if sales_buyer:
+        sales_qs = sales_qs.filter(partner__name__icontains=sales_buyer)
+    if sales_flock.isdigit():
+        sales_qs = sales_qs.filter(flock_id=int(sales_flock))
+    if sales_only_debts:
+        sales_qs = sales_qs.filter(payments__status="due").distinct()
+
+    def _sum_qty(doc: Document, *, keys: set[str]) -> Decimal:
+        total = Decimal("0")
+        for ln in doc.lines.all():
+            desc = (ln.description or "").strip().lower()
+            if desc in keys:
+                total += (ln.qty or Decimal("0"))
+        return total
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Vanzari"
+
+    headers = ["DATA", "ORA", "CUMPĂRĂTOR", "PUI ALBI", "PUI COLORATI", "FURAJ(KG)", "BANI", "DATORIE", "SERIE", "HALA"]
+    ws.append(headers)
+
+    for d in sales_qs:
+        pui_albi = int(_sum_qty(d, keys={"pui albi"}) or 0)
+        pui_colorati = int(_sum_qty(d, keys={"pui colorați", "pui colorati"}) or 0)
+        furaj = (_sum_qty(d, keys={"furaj"}) or Decimal("0")).quantize(Decimal("0.001"))
+        datorie = sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00")).quantize(Decimal("0.01"))
+        ora = timezone.localtime(d.created_at).strftime("%H:%M") if getattr(d, "created_at", None) else ""
+        buyer = d.partner.name if d.partner else ""
+        serie = d.flock.season.name if d.flock_id else ""
+        hala = d.flock.house.name if d.flock_id else ""
+        bani = (d.total or Decimal("0.00")).quantize(Decimal("0.01"))
+
+        ws.append([
+            d.date.isoformat() if d.date else "",
+            ora,
+            buyer,
+            pui_albi,
+            pui_colorati,
+            float(furaj),
+            float(bani),
+            float(datorie),
+            serie,
+            hala,
+        ])
+
+    # formatare numerică simplă
+    for row in ws.iter_rows(min_row=2):
+        # FURAJ(KG) col 6
+        row[5].number_format = "0.000"
+        # BANI col 7, DATORIE col 8
+        row[6].number_format = "0.00"
+        row[7].number_format = "0.00"
+
+    # lățimi coloane
+    widths = [12, 8, 28, 10, 12, 12, 12, 12, 16, 16]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"vanzari_{timezone.localdate().isoformat()}.xlsx"
+    resp = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
 
 
 @login_required

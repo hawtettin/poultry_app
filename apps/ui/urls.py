@@ -26,6 +26,7 @@ urlpatterns = [
 
     # Vânzări
     path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
+    path("sales/export.xlsx", views.sales_export_xlsx, name="sales_export_xlsx"),
     path("payments/ledger/", views.payment_ledger, name="payment_ledger"),
     path("payments/<int:pk>/edit/", views.payment_edit, name="payment_edit"),
     path("payments/<int:pk>/delete/", views.payment_delete, name="payment_delete"),
