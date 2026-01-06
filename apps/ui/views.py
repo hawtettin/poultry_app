@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.cache import never_cache
 
 from apps.core.models import Flock
 from apps.health.models import MortalityEvent
@@ -104,6 +105,7 @@ def safe_next_url(request, default: str) -> str:
     return default
 
 
+@never_cache
 @login_required
 def dashboard(request):
     active_tab = (request.GET.get("tab") or "flocks").strip() or "flocks"
@@ -605,6 +607,7 @@ def access_history(request):
     )
 
 
+@never_cache
 @login_required
 def payment_ledger(request):
     """Ledger (registru) plăți.

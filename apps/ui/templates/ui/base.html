@@ -4,6 +4,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    {#
+      Evită pagini "înghețate" când utilizatorul navighează Back/Forward (BFCache).
+      Ne ajută să vedem imediat modificările (ex: ștergeri în ledger / vânzări noi).
+    #}
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>{% block title %}Ferma Avicolă{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   </head>
@@ -57,6 +64,24 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      (function(){
+        // Dacă pagina a fost restaurată din BFCache (Back/Forward), forțăm reload ca să vedem date proaspete.
+        function navWasBackForward(){
+          try {
+            const nav = performance.getEntriesByType && performance.getEntriesByType("navigation");
+            if(nav && nav.length && nav[0].type === "back_forward") return true;
+          } catch(e) {}
+          return false;
+        }
+        window.addEventListener("pageshow", function(e){
+          if(e.persisted || navWasBackForward()){
+            window.location.reload();
+          }
+        });
+      })();
+    </script>
     {% block scripts %}{% endblock %}
   </body>
 </html>
