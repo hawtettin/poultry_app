@@ -1,0 +1,230 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Ledger cheltuieli{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">Ledger cheltuieli</h2>
+    <div class="text-muted small">Registru cheltuieli (facturi/bonuri) legat de hale și loturi, cu plăți și atașamente.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap justify-content-end">
+    <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=expenses">Dashboard</a>
+    <a class="btn btn-outline-secondary" href="{% url 'ui:expenses_export_xlsx' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Export Excel</a>
+    <a class="btn btn-success" href="{% url 'ui:expense_create' %}?next={{ request.get_full_path|urlencode }}">+ Adaugă cheltuială</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Total filtrat ({{ expense_totals.count }} doc.)</div>
+        <div class="h4 mb-0">{{ expense_totals.total }} RON</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Plătit</div>
+        <div class="h4 mb-0">{{ expense_totals.paid }} RON</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Restanțe</div>
+        <div class="h4 mb-0">{{ expense_totals.due }} RON</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Filtre</div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small">De la</label>
+        <input type="date" name="exp_from" class="form-control" value="{{ exp_from }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Până la</label>
+        <input type="date" name="exp_to" class="form-control" value="{{ exp_to }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Hală</label>
+        <select name="exp_house" class="form-select">
+          <option value="">Toate</option>
+          {% for h in houses_list %}
+            <option value="{{ h.id }}" {% if exp_house|add:'' == h.id|add:'' %}selected{% endif %}>{{ h.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Lot (serie)</label>
+        <select name="exp_flock" class="form-select">
+          <option value="">Toate</option>
+          {% for f in flocks_list %}
+            <option value="{{ f.id }}" {% if exp_flock|add:'' == f.id|add:'' %}selected{% endif %}>{{ f.season.name }} / {{ f.house.name }} ({{ f.start_date }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Status</label>
+        <select name="exp_status" class="form-select">
+          <option value="all" {% if exp_status == 'all' %}selected{% endif %}>Toate</option>
+          <option value="unpaid" {% if exp_status == 'unpaid' %}selected{% endif %}>Neplătit</option>
+          <option value="partial" {% if exp_status == 'partial' %}selected{% endif %}>Parțial</option>
+          <option value="paid" {% if exp_status == 'paid' %}selected{% endif %}>Plătit</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Furnizor</label>
+        <input type="text" name="exp_supplier" class="form-control" placeholder="căutare..." value="{{ exp_supplier }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small">Căutare</label>
+        <input type="text" name="exp_search" class="form-control" placeholder="nr document / notițe / denumire" value="{{ exp_search }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Atașamente</label>
+        <select name="exp_has_attach" class="form-select">
+          <option value="" {% if not exp_has_attach %}selected{% endif %}>Toate</option>
+          <option value="1" {% if exp_has_attach == '1' %}selected{% endif %}>Are</option>
+          <option value="0" {% if exp_has_attach == '0' %}selected{% endif %}>Nu are</option>
+        </select>
+      </div>
+      <div class="col-md-12 text-end">
+        <button class="btn btn-outline-primary" type="submit">Aplică filtre</button>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:expense_ledger' %}">Reset</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Cheltuieli (ultimele 600)</span>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:payment_ledger' %}">Ledger plăți</a>
+      </div>
+      <div class="card-body">
+        {% if expenses %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Furnizor</th>
+                  <th>Nr doc</th>
+                  <th>Hale</th>
+                  <th class="text-end">Total</th>
+                  <th>Status</th>
+                  <th>Scadență</th>
+                  <th class="text-end">Doc</th>
+                  <th class="text-end">Acțiuni</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for d in expenses %}
+                  <tr>
+                    <td>{{ d.date }}</td>
+                    <td>{{ d.partner.name|default:"—" }}</td>
+                    <td>
+                      <a href="{% url 'ui:expense_detail' d.id %}">{{ d.doc_no|default:"(fără nr)" }}</a>
+                      <div class="text-muted small">{{ d.season.name }}</div>
+                    </td>
+                    <td>{{ d.houses_label }}</td>
+                    <td class="text-end fw-semibold">{{ d.total }}</td>
+                    <td>
+                      {% if d.pay_status == 'paid' %}
+                        <span class="badge text-bg-success">{{ d.pay_status_label }}</span>
+                      {% elif d.pay_status == 'partial' %}
+                        <span class="badge text-bg-primary">{{ d.pay_status_label }}</span>
+                      {% else %}
+                        <span class="badge text-bg-warning">{{ d.pay_status_label }}</span>
+                      {% endif %}
+                    </td>
+                    <td>{% if d.next_due_date %}{{ d.next_due_date }}{% else %}-{% endif %}</td>
+                    <td class="text-end">{% if d.attach_count %}{{ d.attach_count }}{% else %}0{% endif %}</td>
+                    <td class="text-end">
+                      <div class="d-inline-flex flex-wrap gap-1 justify-content-end">
+                        <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:expense_detail' d.id %}">Vezi</a>
+                        {% if d.can_modify %}
+                          <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:expense_edit' d.id %}?next={{ request.get_full_path|urlencode }}">Editează</a>
+                          <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:expense_delete' d.id %}?next={{ request.get_full_path|urlencode }}">Șterge</a>
+                        {% endif %}
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">Nicio cheltuială găsită.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card mb-3">
+      <div class="card-header">Top denumiri (filtru curent)</div>
+      <div class="card-body">
+        {% if top_expense_names %}
+          <ol class="mb-0">
+            {% for t in top_expense_names %}
+              <li>{{ t.description|default:"(fără denumire)" }}: {{ t.total|floatformat:2 }} RON</li>
+            {% endfor %}
+          </ol>
+        {% else %}
+          <div class="text-muted">-</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Cost pe lot (filtru curent)</div>
+      <div class="card-body">
+        {% if expense_cost_by_flock %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Lot</th>
+                  <th class="text-end">Cost</th>
+                  <th class="text-end">Cost/pui</th>
+                  <th class="text-end">Detalii</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in expense_cost_by_flock %}
+                  <tr>
+                    <td>
+                      <div>{{ row.flock.season.name }} • {{ row.flock.house.name }}</div>
+                      <div class="text-muted small">{{ row.flock.start_date }} • inițial: {{ row.init_total }}</div>
+                    </td>
+                    <td class="text-end">{{ row.cost }}</td>
+                    <td class="text-end">{{ row.cost_per_chick }} RON</td>
+                    <td class="text-end">
+                      <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:flock_cost_report' row.flock.id %}?next={{ request.get_full_path|urlencode }}">Cost pe lot</a>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">Nu există linii alocate pe lot în filtrul curent.</div>
+          <div class="text-muted small">Tip: la fiecare cheltuială, adaugă linii cu Hală + Lot ca să vezi cost/pui.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

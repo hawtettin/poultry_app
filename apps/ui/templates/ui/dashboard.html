@@ -633,7 +633,11 @@
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
               <span>Cheltuieli (ultimele 200)</span>
-              <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:payment_ledger' %}">Ledger plăți</a>
+              <div class="d-flex gap-2">
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:expenses_export_xlsx' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Export Excel</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:expense_ledger' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Ledger cheltuieli</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'ui:payment_ledger' %}">Ledger plăți</a>
+              </div>
             </div>
             <div class="card-body">
               {% if expenses %}
@@ -722,6 +726,7 @@
                         <th>Lot</th>
                         <th class="text-end">Cost</th>
                         <th class="text-end">Cost/pui</th>
+                        <th class="text-end">Detalii</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -733,6 +738,9 @@
                           </td>
                           <td class="text-end">{{ row.cost }}</td>
                           <td class="text-end">{{ row.cost_per_chick }} RON</td>
+                          <td class="text-end">
+                            <a class="btn btn-sm btn-outline-primary" href="{% url 'ui:flock_cost_report' row.flock.id %}?next={{ request.get_full_path|urlencode }}">Cost pe lot</a>
+                          </td>
                         </tr>
                       {% endfor %}
                     </tbody>

@@ -91,7 +91,11 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "media/"
+# IMPORTANT:
+# MEDIA_URL trebuie să fie un URL absolut (cu slash la început).
+# Altfel, în paginile cu path nested (ex: /expenses/12/edit/) linkul către fișiere devine relativ
+# și rezultă 404 de tipul: /expenses/12/edit/media/... .
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

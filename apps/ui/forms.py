@@ -850,8 +850,10 @@ class ExpenseDocumentForm(forms.Form):
         status = (cleaned.get("payment_status") or "").strip() or "unpaid"
         due = cleaned.get("due_date")
 
+        # UX: dacă user-ul uită scadența la "Neplătit"/"Parțial", nu blocăm salvarea.
+        # Setăm implicit scadența = data documentului (sau azi) ca să evităm erori la editare.
         if status in ("unpaid", "partial") and not due:
-            raise ValidationError("Completează scadența pentru facturi neplătite/parțiale.")
+            cleaned["due_date"] = cleaned.get("date") or timezone.localdate()
 
         cleaned["supplier_name"] = supplier
         return cleaned
@@ -888,12 +890,9 @@ class ExpenseLineForm(forms.ModelForm):
         house = cleaned.get("house")
         flock = cleaned.get("flock")
 
-        # Dacă user alege flock, house trebuie să corespundă.
-        if flock and house and getattr(flock, "house_id", None) != getattr(house, "id", None):
-            raise ValidationError("Seria (lotul) selectată nu aparține halei selectate.")
-
-        # Dacă alege flock, dar uită house, îl completăm automat.
-        if flock and not house:
+        # Dacă user alege flock, hala trebuie să fie cea a lotului.
+        # În loc să blocăm editarea pentru date vechi/mixate, corectăm automat.
+        if flock:
             cleaned["house"] = flock.house
 
         return cleaned

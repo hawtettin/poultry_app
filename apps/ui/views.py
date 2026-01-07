@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import mimetypes
+import os
 from io import BytesIO
 
 import openpyxl
@@ -13,7 +15,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum, Count
 from django.db.models.functions import Coalesce
 from django.forms import inlineformset_factory
-from django.http import HttpResponse
+from django.http import HttpResponse, FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -1927,6 +1929,661 @@ def expense_attachment_delete(request, pk: int):
         return redirect(next_url)
 
     return render(request, "ui/expense_attachment_confirm_delete.html", {"att": att, "d": d, "next_url": next_url})
+
+
+@login_required
+def expense_attachment_download(request, pk: int):
+    """Descarcă / deschide un atașament de cheltuială.
+
+    În producție (Render) nu servim MEDIA prin Django (DEBUG=False), deci linkurile directe
+    către /media/... pot da 404. Această rută servește fișierul prin aplicație.
+    """
+
+    att = get_object_or_404(
+        ExpenseAttachment.objects.select_related("document"),
+        pk=pk,
+    )
+    d = att.document
+
+    if getattr(d, "doc_type", None) != "expense":
+        raise Http404("Atașament invalid")
+
+    if not att.file:
+        raise Http404("Fișier inexistent")
+
+    # Deschidem din storage (funcționează și pe FileSystemStorage și pe storage-uri remote)
+    try:
+        att.file.open("rb")
+    except Exception as exc:
+        raise Http404("Nu pot deschide fișierul") from exc
+
+    filename = (att.original_name or "" ).strip() or os.path.basename(getattr(att.file, "name", "")) or f"attachment_{att.id}"
+    content_type, _ = mimetypes.guess_type(filename)
+
+    resp = FileResponse(att.file, content_type=content_type or "application/octet-stream")
+    safe_name = filename.replace('"', "")
+    # inline ca să se poată deschide PDF/JPG în browser; pentru alte tipuri, browserul va descărca.
+    resp["Content-Disposition"] = f'inline; filename="{safe_name}"'
+    return resp
+
+
+@login_required
+def expenses_export_xlsx(request):
+    """Export Excel (.xlsx) pentru cheltuieli, în funcție de filtrele din UI.
+
+    Filtre (GET) – aceleași ca în tab-ul Cheltuieli:
+      - exp_from, exp_to (YYYY-MM-DD)
+      - exp_house=<id>
+      - exp_flock=<id>
+      - exp_supplier=string
+      - exp_status=all|unpaid|partial|paid
+      - exp_has_attach=1|0
+      - exp_search=string
+
+    Output:
+      - Sheet 1: "Documente" (un rând per document)
+      - Sheet 2: "Linii"     (un rând per linie; dacă filtrezi pe hală/lot, exportă doar liniile potrivite)
+    """
+
+    exp_from = parse_date((request.GET.get("exp_from") or "").strip())
+    exp_to = parse_date((request.GET.get("exp_to") or "").strip())
+    exp_house = (request.GET.get("exp_house") or "").strip()
+    exp_flock = (request.GET.get("exp_flock") or "").strip()
+    exp_supplier = (request.GET.get("exp_supplier") or "").strip()
+    exp_status = (request.GET.get("exp_status") or "all").strip() or "all"
+    exp_has_attach = (request.GET.get("exp_has_attach") or "").strip()
+    exp_search = (request.GET.get("exp_search") or "").strip()
+
+    qs = (
+        Document.objects.filter(doc_type="expense")
+        .select_related("season", "partner")
+        .prefetch_related("lines", "payments", "attachments")
+    )
+
+    if exp_from:
+        qs = qs.filter(date__gte=exp_from)
+    if exp_to:
+        qs = qs.filter(date__lte=exp_to)
+    if exp_supplier:
+        qs = qs.filter(partner__name__icontains=exp_supplier)
+
+    # Filtrare după alocări (linii)
+    if exp_house.isdigit():
+        qs = qs.filter(lines__house_id=int(exp_house)).distinct()
+    if exp_flock.isdigit():
+        qs = qs.filter(lines__flock_id=int(exp_flock)).distinct()
+
+    if exp_search:
+        qs = qs.filter(
+            Q(doc_no__icontains=exp_search)
+            | Q(notes__icontains=exp_search)
+            | Q(lines__description__icontains=exp_search)
+        ).distinct()
+
+    if exp_has_attach in ("1", "true", "True", "yes"):
+        qs = qs.filter(attachments__isnull=False).distinct()
+    elif exp_has_attach in ("0", "false", "False", "no"):
+        qs = qs.filter(attachments__isnull=True).distinct()
+
+    qs = qs.annotate(
+        paid_sum=Coalesce(Sum("payments__amount", filter=Q(payments__status="paid")), Decimal("0.00")),
+        due_sum=Coalesce(Sum("payments__amount", filter=Q(payments__status="due")), Decimal("0.00")),
+        attach_count=Count("attachments", distinct=True),
+    )
+
+    if exp_status == "paid":
+        qs = qs.filter(due_sum=Decimal("0.00"), paid_sum__gt=Decimal("0.00"))
+    elif exp_status == "unpaid":
+        qs = qs.filter(paid_sum=Decimal("0.00"))
+    elif exp_status == "partial":
+        qs = qs.filter(paid_sum__gt=Decimal("0.00"), due_sum__gt=Decimal("0.00"))
+
+    docs = list(qs.order_by("-date", "-id"))
+
+    # -----------------
+    # Workbook
+    # -----------------
+    wb = openpyxl.Workbook()
+
+    # Sheet: Documente
+    ws = wb.active
+    ws.title = "Documente"
+    ws.append([
+        "DOC_ID",
+        "DATA",
+        "SERIE",
+        "FURNIZOR",
+        "NR_DOC",
+        "TVA_%",
+        "SUBTOTAL",
+        "TVA",
+        "TOTAL",
+        "STATUS_PLATA",
+        "PLATIT",
+        "DATORIE",
+        "SCADENTA",
+        "METODA",
+        "ATASE",
+        "HALE",
+        "NOTE",
+    ])
+
+    for d in docs:
+        paid = (getattr(d, "paid_sum", None) or Decimal("0.00")).quantize(Decimal("0.01"))
+        due = (getattr(d, "due_sum", None) or Decimal("0.00")).quantize(Decimal("0.01"))
+
+        if paid > 0 and due > 0:
+            status_label = "Parțial"
+        elif due > 0 and paid == 0:
+            status_label = "Neplătit"
+        elif due == 0 and paid > 0:
+            status_label = "Plătit"
+        else:
+            status_label = "Neplătit"
+
+        # scadența următoare (din plăți due)
+        try:
+            dues = [p.due_date for p in d.payments.all() if p.status == "due" and p.due_date]
+            next_due = min(dues) if dues else None
+        except Exception:
+            next_due = None
+
+        # hale implicate
+        try:
+            houses = []
+            for ln in d.lines.all():
+                if getattr(ln, "house", None):
+                    houses.append(ln.house.name)
+            houses_label = ", ".join(sorted(set(houses))) if houses else ""
+        except Exception:
+            houses_label = ""
+
+        # metodă (luăm metoda primei plăți dacă există)
+        method = ""
+        try:
+            if d.payments.exists():
+                method = d.payments.first().method or ""
+        except Exception:
+            method = ""
+        if method == "bank":
+            method = "OP"
+
+        ws.append([
+            d.id,
+            d.date.isoformat() if d.date else "",
+            (d.season.name if d.season_id else ""),
+            (d.partner.name if d.partner_id else ""),
+            (d.doc_no or ""),
+            float((d.vat_rate or Decimal("0"))
+                  .quantize(Decimal("0.01"))),
+            float((d.subtotal or Decimal("0.00")).quantize(Decimal("0.01"))),
+            float((d.vat or Decimal("0.00")).quantize(Decimal("0.01"))),
+            float((d.total or Decimal("0.00")).quantize(Decimal("0.01"))),
+            status_label,
+            float(paid),
+            float(due),
+            (next_due.isoformat() if next_due else ""),
+            method,
+            int(getattr(d, "attach_count", 0) or 0),
+            houses_label,
+            (d.notes or ""),
+        ])
+
+    # Sheet: Linii
+    ws2 = wb.create_sheet("Linii")
+    ws2.append([
+        "DOC_ID",
+        "DATA",
+        "SERIE",
+        "FURNIZOR",
+        "NR_DOC",
+        "HALA",
+        "LOT",
+        "DENUMIRE",
+        "CANTITATE",
+        "UM",
+        "PRET_UNITAR",
+        "TOTAL_LINIE",
+    ])
+
+    selected_house_id = int(exp_house) if exp_house.isdigit() else None
+    selected_flock_id = int(exp_flock) if exp_flock.isdigit() else None
+
+    for d in docs:
+        for ln in d.lines.all():
+            # Dacă exportăm filtrat pe hală/lot, scoatem doar liniile relevante.
+            if selected_house_id and getattr(ln, "house_id", None) != selected_house_id:
+                continue
+            if selected_flock_id and getattr(ln, "flock_id", None) != selected_flock_id:
+                continue
+
+            lot_label = ""
+            try:
+                if ln.flock_id and ln.flock:
+                    lot_label = f"{ln.flock.season.name} / {ln.flock.house.name} ({ln.flock.start_date})"
+            except Exception:
+                lot_label = ""
+
+            ws2.append([
+                d.id,
+                d.date.isoformat() if d.date else "",
+                (d.season.name if d.season_id else ""),
+                (d.partner.name if d.partner_id else ""),
+                (d.doc_no or ""),
+                (ln.house.name if getattr(ln, "house", None) else ""),
+                lot_label,
+                (ln.description or ""),
+                float((ln.qty or Decimal("0")).quantize(Decimal("0.001"))),
+                (ln.unit or ""),
+                float((ln.unit_price or Decimal("0")).quantize(Decimal("0.0001"))),
+                float((ln.line_total or Decimal("0.00")).quantize(Decimal("0.01"))),
+            ])
+
+    # Formatare numerică
+    for row in ws.iter_rows(min_row=2):
+        # SUBTOTAL (7), TVA (8), TOTAL (9), PLATIT(11), DATORIE(12)
+        for idx in (5, 6, 7, 8, 10, 11):
+            try:
+                row[idx].number_format = "0.00"
+            except Exception:
+                pass
+
+    for row in ws2.iter_rows(min_row=2):
+        # CANTITATE (9)
+        row[8].number_format = "0.000"
+        # PRET_UNITAR (11)
+        row[10].number_format = "0.0000"
+        # TOTAL_LINIE (12)
+        row[11].number_format = "0.00"
+
+    # Lățimi coloane (simplu)
+    widths_docs = [8, 12, 18, 26, 18, 8, 12, 12, 12, 12, 12, 12, 12, 10, 8, 22, 30]
+    for i, w in enumerate(widths_docs, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    widths_lines = [8, 12, 18, 26, 18, 16, 26, 22, 12, 8, 12, 12]
+    for i, w in enumerate(widths_lines, start=1):
+        ws2.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"cheltuieli_{timezone.localdate().isoformat()}.xlsx"
+    resp = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+@login_required
+def flock_cost_report(request, pk: int):
+    """Raport 'Cost pe lot' (detaliat): cheltuieli alocate + nr pui + cost/pui."""
+
+    flock = get_object_or_404(
+        Flock.objects.select_related("season", "house"),
+        pk=pk,
+    )
+
+    # unde ne întoarcem (Dashboard / Ledger etc.)
+    default_next = reverse("ui:expense_ledger")
+    next_url = safe_next_url(request, default_next)
+
+    date_from = parse_date((request.GET.get("from") or "").strip())
+    date_to = parse_date((request.GET.get("to") or "").strip())
+
+    # -----------------
+    # Stoc (inițial / mortalitate / vânzări / curent) pe tip
+    # -----------------
+    init_white = int(getattr(flock, "initial_white_count", 0) or 0)
+    init_colored = int(getattr(flock, "initial_colored_count", 0) or 0)
+    if (init_white + init_colored) <= 0:
+        init_white = int(getattr(flock, "initial_count", 0) or 0)
+        init_colored = 0
+    init_total = int(init_white + init_colored)
+
+    mort_white = MortalityEvent.objects.filter(flock=flock, poultry_type="white").aggregate(s=Coalesce(Sum("count"), 0))["s"] or 0
+    mort_colored = MortalityEvent.objects.filter(flock=flock, poultry_type="colored").aggregate(s=Coalesce(Sum("count"), 0))["s"] or 0
+    mort_total = int(mort_white) + int(mort_colored)
+
+    sold_white = DocumentLine.objects.filter(document__doc_type="sale", document__flock=flock, description__iexact="Pui albi").aggregate(s=Coalesce(Sum("qty"), 0))["s"] or 0
+    sold_colored = DocumentLine.objects.filter(
+        document__doc_type="sale",
+        document__flock=flock,
+    ).filter(Q(description__iexact="Pui colorați") | Q(description__iexact="Pui colorati")).aggregate(s=Coalesce(Sum("qty"), 0))["s"] or 0
+    sold_white = int(sold_white or 0)
+    sold_colored = int(sold_colored or 0)
+    sold_total = int(sold_white + sold_colored)
+
+    current_white = max(int(init_white) - int(mort_white) - int(sold_white), 0)
+    current_colored = max(int(init_colored) - int(mort_colored) - int(sold_colored), 0)
+    current_total = int(current_white + current_colored)
+
+    # -----------------
+    # Cheltuieli alocate pe lot
+    # -----------------
+    lines_qs = (
+        DocumentLine.objects
+        .filter(document__doc_type="expense", flock=flock)
+        .select_related("document", "document__partner", "document__season", "house", "flock", "flock__season", "flock__house")
+        .order_by("-document__date", "-id")
+    )
+    if date_from:
+        lines_qs = lines_qs.filter(document__date__gte=date_from)
+    if date_to:
+        lines_qs = lines_qs.filter(document__date__lte=date_to)
+
+    total_cost = (lines_qs.aggregate(s=Coalesce(Sum("line_total"), Decimal("0.00")))["s"] or Decimal("0.00")).quantize(Decimal("0.01"))
+
+    cost_per_initial = (total_cost / Decimal(init_total)).quantize(Decimal("0.0001")) if init_total else Decimal("0")
+    cost_per_current = (total_cost / Decimal(current_total)).quantize(Decimal("0.0001")) if current_total else Decimal("0")
+
+    by_desc = list(
+        lines_qs.values("description")
+        .annotate(total=Sum("line_total"))
+        .order_by("-total")
+    )
+    for r in by_desc:
+        r["total"] = (r.get("total") or Decimal("0.00")).quantize(Decimal("0.01"))
+
+    # Grupare pe document pentru afișare mai clară
+    grouped = {}
+    for ln in list(lines_qs):
+        doc = ln.document
+        grouped.setdefault(doc.id, {"doc": doc, "lines": [], "sum": Decimal("0.00")})
+        grouped[doc.id]["lines"].append(ln)
+        grouped[doc.id]["sum"] = (grouped[doc.id]["sum"] + (ln.line_total or Decimal("0.00"))).quantize(Decimal("0.01"))
+
+    grouped_docs = list(grouped.values())
+    grouped_docs.sort(key=lambda x: (x["doc"].date or timezone.localdate(), x["doc"].id), reverse=True)
+
+    return render(
+        request,
+        "ui/flock_cost_report.html",
+        {
+            "next_url": next_url,
+            "flock": flock,
+            "date_from": (date_from.isoformat() if date_from else ""),
+            "date_to": (date_to.isoformat() if date_to else ""),
+            "init_white": init_white,
+            "init_colored": init_colored,
+            "init_total": init_total,
+            "mort_white": int(mort_white or 0),
+            "mort_colored": int(mort_colored or 0),
+            "mort_total": mort_total,
+            "sold_white": sold_white,
+            "sold_colored": sold_colored,
+            "sold_total": sold_total,
+            "current_white": current_white,
+            "current_colored": current_colored,
+            "current_total": current_total,
+            "total_cost": total_cost,
+            "cost_per_initial": cost_per_initial,
+            "cost_per_current": cost_per_current,
+            "by_desc": by_desc,
+            "grouped_docs": grouped_docs,
+        },
+    )
+
+
+@login_required
+def expense_ledger(request):
+    """Ledger separat pentru cheltuieli (registru cheltuieli) – cu filtre + export."""
+
+    exp_from = parse_date((request.GET.get("exp_from") or "").strip())
+    exp_to = parse_date((request.GET.get("exp_to") or "").strip())
+    exp_house = (request.GET.get("exp_house") or "").strip()
+    exp_flock = (request.GET.get("exp_flock") or "").strip()
+    exp_supplier = (request.GET.get("exp_supplier") or "").strip()
+    exp_status = (request.GET.get("exp_status") or "all").strip() or "all"
+    exp_has_attach = (request.GET.get("exp_has_attach") or "").strip()
+    exp_search = (request.GET.get("exp_search") or "").strip()
+
+    expenses_qs = (
+        Document.objects.filter(doc_type="expense")
+        .select_related("season", "partner")
+        .prefetch_related("lines", "payments", "attachments")
+    )
+
+    if exp_from:
+        expenses_qs = expenses_qs.filter(date__gte=exp_from)
+    if exp_to:
+        expenses_qs = expenses_qs.filter(date__lte=exp_to)
+    if exp_supplier:
+        expenses_qs = expenses_qs.filter(partner__name__icontains=exp_supplier)
+
+    if exp_house.isdigit():
+        expenses_qs = expenses_qs.filter(lines__house_id=int(exp_house)).distinct()
+    if exp_flock.isdigit():
+        expenses_qs = expenses_qs.filter(lines__flock_id=int(exp_flock)).distinct()
+
+    if exp_search:
+        expenses_qs = expenses_qs.filter(
+            Q(doc_no__icontains=exp_search)
+            | Q(notes__icontains=exp_search)
+            | Q(lines__description__icontains=exp_search)
+        ).distinct()
+
+    if exp_has_attach in ("1", "true", "True", "yes"):
+        expenses_qs = expenses_qs.filter(attachments__isnull=False).distinct()
+    elif exp_has_attach in ("0", "false", "False", "no"):
+        expenses_qs = expenses_qs.filter(attachments__isnull=True).distinct()
+
+    expenses_qs = expenses_qs.annotate(
+        paid_sum=Coalesce(Sum("payments__amount", filter=Q(payments__status="paid")), Decimal("0.00")),
+        due_sum=Coalesce(Sum("payments__amount", filter=Q(payments__status="due")), Decimal("0.00")),
+        attach_count=Count("attachments", distinct=True),
+    )
+
+    if exp_status == "paid":
+        expenses_qs = expenses_qs.filter(due_sum=Decimal("0.00"), paid_sum__gt=Decimal("0.00"))
+    elif exp_status == "unpaid":
+        expenses_qs = expenses_qs.filter(paid_sum=Decimal("0.00"))
+    elif exp_status == "partial":
+        expenses_qs = expenses_qs.filter(paid_sum__gt=Decimal("0.00"), due_sum__gt=Decimal("0.00"))
+
+    expense_doc_ids = list(expenses_qs.values_list("id", flat=True).distinct())
+    totals = {
+        "total": Decimal("0.00"),
+        "paid": Decimal("0.00"),
+        "due": Decimal("0.00"),
+        "count": len(expense_doc_ids),
+    }
+    if expense_doc_ids:
+        totals["total"] = (
+            Document.objects.filter(id__in=expense_doc_ids).aggregate(s=Coalesce(Sum("total"), Decimal("0.00")))["s"]
+            or Decimal("0.00")
+        ).quantize(Decimal("0.01"))
+        pay_aggr = Payment.objects.filter(document_id__in=expense_doc_ids).aggregate(
+            paid=Coalesce(Sum("amount", filter=Q(status="paid")), Decimal("0.00")),
+            due=Coalesce(Sum("amount", filter=Q(status="due")), Decimal("0.00")),
+        )
+        totals["paid"] = (pay_aggr.get("paid") or Decimal("0.00")).quantize(Decimal("0.01"))
+        totals["due"] = (pay_aggr.get("due") or Decimal("0.00")).quantize(Decimal("0.01"))
+
+    docs = list(expenses_qs.order_by("-date", "-id")[:600])
+    for d in docs:
+        paid = (getattr(d, "paid_sum", None) or Decimal("0.00")).quantize(Decimal("0.01"))
+        due = (getattr(d, "due_sum", None) or Decimal("0.00")).quantize(Decimal("0.01"))
+        if paid > 0 and due > 0:
+            d.pay_status = "partial"
+            d.pay_status_label = "Parțial"
+        elif due > 0 and paid == 0:
+            d.pay_status = "unpaid"
+            d.pay_status_label = "Neplătit"
+        elif due == 0 and paid > 0:
+            d.pay_status = "paid"
+            d.pay_status_label = "Plătit"
+        else:
+            d.pay_status = "unpaid"
+            d.pay_status_label = "Neplătit"
+
+        try:
+            dues = [p.due_date for p in d.payments.all() if p.status == "due" and p.due_date]
+            d.next_due_date = min(dues) if dues else None
+        except Exception:
+            d.next_due_date = None
+
+        try:
+            houses = []
+            flocks_in_doc = []
+            for ln in d.lines.all():
+                if getattr(ln, "house", None):
+                    houses.append(ln.house.name)
+                if getattr(ln, "flock", None):
+                    flocks_in_doc.append(ln.flock)
+            d.houses_label = ", ".join(sorted(set(houses))) if houses else "—"
+            d.flocks_count = len({f.id for f in flocks_in_doc}) if flocks_in_doc else 0
+        except Exception:
+            d.houses_label = "—"
+            d.flocks_count = 0
+
+        d.can_modify = can_modify_expense(request.user, d)
+
+    # cost pe lot (defalcat) pentru filtrul curent
+    expense_cost_by_flock = []
+    if expense_doc_ids:
+        rows = (
+            DocumentLine.objects.filter(document_id__in=expense_doc_ids, document__doc_type="expense")
+            .filter(flock__isnull=False)
+            .values("flock")
+            .annotate(cost=Sum("line_total"))
+            .order_by("-cost")
+        )
+        flock_ids = [int(r["flock"]) for r in rows]
+        flocks_map = {
+            f.id: f
+            for f in Flock.objects.filter(id__in=flock_ids).select_related("season", "house")
+        }
+        for r in rows:
+            fid = int(r["flock"]) if r.get("flock") else None
+            f = flocks_map.get(fid)
+            if not f:
+                continue
+            cost = (r.get("cost") or Decimal("0.00")).quantize(Decimal("0.01"))
+            init_total = int((getattr(f, "initial_white_count", 0) or 0) + (getattr(f, "initial_colored_count", 0) or 0))
+            if init_total <= 0:
+                init_total = int(getattr(f, "initial_count", 0) or 0)
+            cost_per_chick = (cost / Decimal(init_total)).quantize(Decimal("0.0001")) if init_total else Decimal("0")
+            expense_cost_by_flock.append({
+                "flock": f,
+                "cost": cost,
+                "init_total": init_total,
+                "cost_per_chick": cost_per_chick,
+            })
+
+    top_expense_names = []
+    if expense_doc_ids:
+        top_expense_names = (
+            DocumentLine.objects.filter(document_id__in=expense_doc_ids, document__doc_type="expense")
+            .values("description")
+            .annotate(total=Sum("line_total"))
+            .order_by("-total")[:10]
+        )
+
+    return render(
+        request,
+        "ui/expense_ledger.html",
+        {
+            "expenses": docs,
+            "exp_from": (exp_from.isoformat() if exp_from else ""),
+            "exp_to": (exp_to.isoformat() if exp_to else ""),
+            "exp_house": exp_house,
+            "exp_flock": exp_flock,
+            "exp_supplier": exp_supplier,
+            "exp_status": exp_status,
+            "exp_has_attach": exp_has_attach,
+            "exp_search": exp_search,
+            "expense_totals": totals,
+            "top_expense_names": top_expense_names,
+            "expense_cost_by_flock": expense_cost_by_flock,
+            "houses_list": House.objects.all().order_by("name"),
+            "flocks_list": Flock.objects.select_related("season", "house").all().order_by("-start_date", "-id"),
+        },
+    )
+
+
+@login_required
+def sales_ledger(request):
+    """Ledger separat pentru vânzări (registru vânzări) – cu filtre + export."""
+
+    sales_from = parse_date((request.GET.get("sales_from") or "").strip())
+    sales_to = parse_date((request.GET.get("sales_to") or "").strip())
+    sales_buyer = (request.GET.get("sales_buyer") or "").strip()
+    sales_flock = (request.GET.get("sales_flock") or "").strip()
+    sales_only_debts = (request.GET.get("sales_only_debts") or "").strip() in ("1", "true", "True", "yes")
+    sales_include_orphans = (request.GET.get("sales_include_orphans") or "").strip() in ("1", "true", "True", "yes")
+
+    qs = (
+        Document.objects.filter(doc_type="sale")
+        .select_related("flock", "flock__season", "flock__house", "partner")
+        .prefetch_related("lines", "payments")
+    )
+    if not sales_include_orphans:
+        qs = qs.filter(payments__isnull=False).distinct()
+    if sales_from:
+        qs = qs.filter(date__gte=sales_from)
+    if sales_to:
+        qs = qs.filter(date__lte=sales_to)
+    if sales_buyer:
+        qs = qs.filter(partner__name__icontains=sales_buyer)
+    if sales_flock.isdigit():
+        qs = qs.filter(flock_id=int(sales_flock))
+    if sales_only_debts:
+        qs = qs.filter(payments__status="due").distinct()
+
+    docs = list(qs.order_by("-date", "-id")[:600])
+
+    def _sum_qty(doc: Document, *, keys: set[str]) -> Decimal:
+        total = Decimal("0")
+        for ln in getattr(doc, "lines", []).all():
+            desc = (ln.description or "").strip().lower()
+            if desc in keys:
+                total += (ln.qty or Decimal("0"))
+        return total
+
+    total_sales = Decimal("0.00")
+    total_paid = Decimal("0.00")
+    total_due = Decimal("0.00")
+
+    for d in docs:
+        d.qty_pui_albi = int(_sum_qty(d, keys={"pui albi"}) or 0)
+        d.qty_pui_colorati = int(_sum_qty(d, keys={"pui colorați", "pui colorati"}) or 0)
+        d.qty_furaj = _sum_qty(d, keys={"furaj"}).quantize(Decimal("0.001"))
+        d.datorie = sum((p.amount for p in d.payments.all() if p.status == "due"), Decimal("0.00")).quantize(Decimal("0.01"))
+        d.bani = sum((p.amount for p in d.payments.all() if p.status == "paid"), Decimal("0.00")).quantize(Decimal("0.01"))
+        try:
+            d.is_orphan = len(list(d.payments.all())) == 0
+        except Exception:
+            d.is_orphan = False
+
+        d.can_delete = can_modify_sale(request.user, d)
+
+        total_sales += (d.total or Decimal("0.00"))
+        total_paid += d.bani
+        total_due += d.datorie
+
+    total_sales = (total_sales or Decimal("0.00")).quantize(Decimal("0.01"))
+    total_paid = (total_paid or Decimal("0.00")).quantize(Decimal("0.01"))
+    total_due = (total_due or Decimal("0.00")).quantize(Decimal("0.01"))
+
+    return render(
+        request,
+        "ui/sales_ledger.html",
+        {
+            "sales": docs,
+            "sales_from": (sales_from.isoformat() if sales_from else ""),
+            "sales_to": (sales_to.isoformat() if sales_to else ""),
+            "sales_buyer": sales_buyer,
+            "sales_flock": sales_flock,
+            "sales_only_debts": sales_only_debts,
+            "sales_include_orphans": sales_include_orphans,
+            "flocks": Flock.objects.select_related("season", "house").all().order_by("-start_date", "-id"),
+            "totals": {"total": total_sales, "paid": total_paid, "due": total_due, "count": len(docs)},
+        },
+    )
 
 
 @login_required

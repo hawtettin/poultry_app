@@ -10,9 +10,13 @@ app_name = "ui"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    # Ledgere dedicate
+    path("ledger/expenses/", views.expense_ledger, name="expense_ledger"),
+    path("ledger/sales/", views.sales_ledger, name="sales_ledger"),
     path("series/new/", views.create_series, name="create_series"),
     path("flocks/<int:pk>/edit/", views.flock_edit, name="flock_edit"),
     path("flocks/<int:pk>/delete/", views.flock_delete, name="flock_delete"),
+    path("flocks/<int:pk>/cost/", views.flock_cost_report, name="flock_cost_report"),
     path("houses/<int:pk>/delete/", views.house_delete, name="house_delete"),
     path("maintenance/cleanup/", views.cleanup_all, name="cleanup_all"),
 
@@ -36,6 +40,9 @@ urlpatterns = [
     path("expenses/<int:pk>/edit/", views.expense_edit, name="expense_edit"),
     path("expenses/<int:pk>/delete/", views.expense_delete, name="expense_delete"),
     path("expense-attachments/<int:pk>/delete/", views.expense_attachment_delete, name="expense_attachment_delete"),
+    path("expense-attachments/<int:pk>/download/", views.expense_attachment_download, name="expense_attachment_download"),
+
+    path("expenses/export.xlsx", views.expenses_export_xlsx, name="expenses_export_xlsx"),
     path("sales/export.csv", views.sales_export_csv, name="sales_export_csv"),
     path("sales/export.xlsx", views.sales_export_xlsx, name="sales_export_xlsx"),
     path("payments/ledger/", views.payment_ledger, name="payment_ledger"),

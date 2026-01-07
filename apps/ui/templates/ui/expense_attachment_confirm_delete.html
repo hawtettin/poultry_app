@@ -11,7 +11,7 @@
 <div class="card mb-3">
   <div class="card-body">
     <div><span class="text-muted">Fișier:</span> {{ att.original_name|default:"fișier" }}</div>
-    <div><a href="{{ att.file.url }}" target="_blank">Deschide fișierul</a></div>
+    <div><a href="{% url 'ui:expense_attachment_download' att.id %}" target="_blank">Deschide fișierul</a></div>
   </div>
 </div>
 

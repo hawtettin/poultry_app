@@ -1,0 +1,146 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Ledger vânzări{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">Ledger vânzări</h2>
+    <div class="text-muted small">Registru vânzări (documente + plăți) cu filtre și export.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap justify-content-end">
+    <a class="btn btn-outline-secondary" href="{% url 'ui:dashboard' %}?tab=sales">Dashboard</a>
+    <a class="btn btn-outline-secondary" href="{% url 'ui:sales_export_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Export CSV</a>
+    <a class="btn btn-outline-secondary" href="{% url 'ui:sales_export_xlsx' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Export Excel</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Total filtrat ({{ totals.count }} doc.)</div>
+        <div class="h4 mb-0">{{ totals.total }} RON</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Încasat (bani)</div>
+        <div class="h4 mb-0">{{ totals.paid }} RON</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted small">Datorii</div>
+        <div class="h4 mb-0">{{ totals.due }} RON</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Filtre</div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small">De la</label>
+        <input type="date" name="sales_from" class="form-control" value="{{ sales_from }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Până la</label>
+        <input type="date" name="sales_to" class="form-control" value="{{ sales_to }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Cumpărător</label>
+        <input type="text" name="sales_buyer" class="form-control" placeholder="căutare..." value="{{ sales_buyer }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Lot</label>
+        <select name="sales_flock" class="form-select">
+          <option value="">Toate</option>
+          {% for f in flocks %}
+            <option value="{{ f.id }}" {% if sales_flock|add:'' == f.id|add:'' %}selected{% endif %}>{{ f.season.name }} / {{ f.house.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" value="1" id="onlyDebts" name="sales_only_debts" {% if sales_only_debts %}checked{% endif %}>
+          <label class="form-check-label" for="onlyDebts">Doar vânzări cu datorie</label>
+        </div>
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" value="1" id="includeOrphans" name="sales_include_orphans" {% if sales_include_orphans %}checked{% endif %}>
+          <label class="form-check-label" for="includeOrphans">Include vânzări fără plăți (orfane)</label>
+        </div>
+      </div>
+      <div class="col-md-6 text-end">
+        <button class="btn btn-outline-primary" type="submit">Aplică filtre</button>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:sales_ledger' %}">Reset</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Vânzări (ultimele 600)</div>
+  <div class="card-body">
+    {% if sales %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Cumpărător</th>
+              <th>Lot</th>
+              <th class="text-end">Pui albi</th>
+              <th class="text-end">Pui colorați</th>
+              <th class="text-end">Furaj (kg)</th>
+              <th class="text-end">Bani</th>
+              <th class="text-end">Datorie</th>
+              <th class="text-end">Acțiuni</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in sales %}
+              <tr>
+                <td>{{ d.date }}</td>
+                <td>{{ d.partner.name|default:"—" }}</td>
+                <td>
+                  {% if d.flock %}
+                    {{ d.flock.season.name }} • {{ d.flock.house.name }}
+                  {% else %}
+                    —
+                  {% endif %}
+                  {% if d.is_orphan %}
+                    <span class="badge text-bg-secondary ms-1">orphan</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">{{ d.qty_pui_albi }}</td>
+                <td class="text-end">{{ d.qty_pui_colorati }}</td>
+                <td class="text-end">{{ d.qty_furaj }}</td>
+                <td class="text-end">{{ d.bani }}</td>
+                <td class="text-end">{{ d.datorie }}</td>
+                <td class="text-end">
+                  {% if d.can_delete %}
+                    <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:sale_delete' d.id %}?next={{ request.get_full_path|urlencode }}">Șterge</a>
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">Nu există vânzări în filtrul curent.</div>
+      <div class="text-muted small">Tip: vânzările se adaugă din Dashboard → tab-ul „Vânzări”.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,197 @@
+{% extends "ui/base.html" %}
+
+{% block title %}Cost pe lot{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">Cost pe lot</h2>
+    <div class="text-muted">
+      {{ flock.season.name }} • {{ flock.house.name }} • start: {{ flock.start_date }}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap justify-content-end">
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Înapoi</a>
+    <a class="btn btn-outline-secondary" href="{% url 'ui:expense_ledger' %}?exp_flock={{ flock.id }}">Vezi în ledger cheltuieli</a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Filtru perioadă (opțional)</div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <input type="hidden" name="next" value="{{ next_url }}" />
+      <div class="col-md-3">
+        <label class="form-label small">De la</label>
+        <input type="date" name="from" class="form-control" value="{{ date_from }}" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Până la</label>
+        <input type="date" name="to" class="form-control" value="{{ date_to }}" />
+      </div>
+      <div class="col-md-6 text-end">
+        <button class="btn btn-outline-primary" type="submit">Aplică</button>
+        <a class="btn btn-outline-secondary" href="{% url 'ui:flock_cost_report' flock.id %}?next={{ next_url|urlencode }}">Reset</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">Pui (stoc pe tip)</div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th></th>
+                <th class="text-end">Pui albi</th>
+                <th class="text-end">Pui colorați</th>
+                <th class="text-end">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-muted">Inițial</td>
+                <td class="text-end">{{ init_white }}</td>
+                <td class="text-end">{{ init_colored }}</td>
+                <td class="text-end fw-semibold">{{ init_total }}</td>
+              </tr>
+              <tr>
+                <td class="text-muted">Mortalitate</td>
+                <td class="text-end">{{ mort_white }}</td>
+                <td class="text-end">{{ mort_colored }}</td>
+                <td class="text-end">{{ mort_total }}</td>
+              </tr>
+              <tr>
+                <td class="text-muted">Vânduți</td>
+                <td class="text-end">{{ sold_white }}</td>
+                <td class="text-end">{{ sold_colored }}</td>
+                <td class="text-end">{{ sold_total }}</td>
+              </tr>
+              <tr>
+                <td class="text-muted">Curent</td>
+                <td class="text-end">{{ current_white }}</td>
+                <td class="text-end">{{ current_colored }}</td>
+                <td class="text-end fw-semibold">{{ current_total }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">Costuri (cheltuieli alocate)</div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-12">
+            <div class="text-muted small">Total cheltuieli (linii alocate pe acest lot)</div>
+            <div class="h4 mb-0">{{ total_cost }} RON</div>
+          </div>
+          <div class="col-6 mt-2">
+            <div class="text-muted small">Cost / pui inițial</div>
+            <div class="h5 mb-0">{{ cost_per_initial }} RON</div>
+          </div>
+          <div class="col-6 mt-2">
+            <div class="text-muted small">Cost / pui curent</div>
+            <div class="h5 mb-0">{{ cost_per_current }} RON</div>
+          </div>
+        </div>
+        <div class="text-muted small mt-2">Notă: costul depinde de cât de bine aloci liniile pe lot (în cheltuieli).</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header">Defalcare pe denumire</div>
+      <div class="card-body">
+        {% if by_desc %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Denumire</th>
+                  <th class="text-end">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in by_desc %}
+                  <tr>
+                    <td>{{ r.description|default:"(fără denumire)" }}</td>
+                    <td class="text-end">{{ r.total }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">Nu există cheltuieli alocate pe acest lot în perioada selectată.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">Detaliu cheltuieli (grupate pe document)</div>
+      <div class="card-body">
+        {% if grouped_docs %}
+          {% for g in grouped_docs %}
+            <div class="border rounded p-2 mb-3">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <div class="fw-semibold">
+                    <a href="{% url 'ui:expense_detail' g.doc.id %}">Cheltuială #{{ g.doc.id }}</a>
+                    <span class="text-muted">• {{ g.doc.date }} • {{ g.doc.partner.name|default:"—" }}</span>
+                  </div>
+                  <div class="text-muted small">Nr doc: {{ g.doc.doc_no|default:"—" }} • Serie: {{ g.doc.season.name }}</div>
+                </div>
+                <div class="text-end">
+                  <div class="text-muted small">Total alocat pe lot</div>
+                  <div class="fw-semibold">{{ g.sum }} RON</div>
+                </div>
+              </div>
+
+              <div class="table-responsive mt-2">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Denumire</th>
+                      <th class="text-end">Cant.</th>
+                      <th>UM</th>
+                      <th class="text-end">Preț unitar</th>
+                      <th class="text-end">Total linie</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for l in g.lines %}
+                      <tr>
+                        <td>{{ l.description }}</td>
+                        <td class="text-end">{{ l.qty }}</td>
+                        <td>{{ l.unit }}</td>
+                        <td class="text-end">{{ l.unit_price }}</td>
+                        <td class="text-end">{{ l.line_total }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="text-muted">Nu există linii de cheltuială alocate acestui lot în perioada selectată.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
